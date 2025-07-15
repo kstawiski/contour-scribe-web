@@ -82,8 +82,8 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     const currentImage = ctImages[currentSlice];
     if (!currentImage) return;
 
-    // Set canvas to fill available space - much larger than before
-    const canvasSize = 600; // Increased from 512
+    // Set canvas to fill available space - make it larger and responsive
+    const canvasSize = 800; // Much larger canvas
     canvas.width = canvasSize;
     canvas.height = canvasSize;
 
@@ -160,23 +160,26 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.stroke();
     }
 
-    // Improved coordinate transformation for DICOM structures
+    // Fixed coordinate transformation for DICOM structures
     const worldToCanvas = (worldX: number, worldY: number, worldZ?: number) => {
-      // More accurate coordinate transformation
-      // Assume DICOM coordinates are in mm, need to convert to pixel space
-      // This is a simplified transformation - real implementation would use 
-      // Image Position Patient and Image Orientation Patient DICOM tags
+      // Convert DICOM world coordinates to canvas coordinates
+      // Assume image coordinates are in pixel space relative to image center
       
-      // For now, assume the image center is at world coordinate (0,0)
-      // and scale appropriately
-      const pixelSpacing = 1; // mm per pixel - would come from DICOM tags
+      // Calculate position relative to image center
+      const centerX = currentImage.width / 2;
+      const centerY = currentImage.height / 2;
       
-      const normalizedX = 0.5 + (worldX / (currentImage.width * pixelSpacing * 0.5));
-      const normalizedY = 0.5 - (worldY / (currentImage.height * pixelSpacing * 0.5)); // Flip Y
+      // Convert world coordinates to image pixel coordinates
+      const imagePixelX = centerX + worldX;
+      const imagePixelY = centerY + worldY; // No Y flip needed here
+      
+      // Transform to canvas coordinates using the image bounds
+      const canvasX = imageX + (imagePixelX / currentImage.width) * drawWidth;
+      const canvasY = imageY + (imagePixelY / currentImage.height) * drawHeight;
       
       return {
-        x: imageX + normalizedX * drawWidth,
-        y: imageY + normalizedY * drawHeight
+        x: canvasX,
+        y: canvasY
       };
     };
 
@@ -525,16 +528,16 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
 
         {/* Viewer Canvas */}
         <div className="flex-1 flex">
-          {/* Canvas Container - Make it stretch more */}
-          <div className="flex-1 bg-black flex items-center justify-center p-2">
+          {/* Canvas Container - Full screen stretch */}
+          <div className="flex-1 bg-black flex items-center justify-center p-4">
             <div className="relative w-full h-full flex items-center justify-center">
               <canvas
                 ref={canvasRef}
-                className="border border-border shadow-elevation max-w-full max-h-full"
+                className="border border-border shadow-elevation"
                 style={{
                   imageRendering: "pixelated",
-                  width: "min(80vh, 80vw)", // Responsive sizing
-                  height: "min(80vh, 80vw)",
+                  width: "min(calc(100vh - 200px), calc(100vw - 700px))", // Full responsive sizing
+                  height: "min(calc(100vh - 200px), calc(100vw - 700px))",
                   cursor: activeTool === "pan" ? "move" : 
                          activeTool === "zoom" ? "zoom-in" : 
                          activeTool === "windowing" ? "crosshair" :
@@ -639,8 +642,8 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           </div>
         </div>
 
-        {/* Structures List */}
-        <div className="flex-1 p-4 space-y-2 overflow-y-auto">
+        {/* Structures List - Scrollable */}
+        <div className="flex-1 p-4 space-y-2 overflow-y-auto max-h-96">
           {structures.map((structure) => (
             <Card 
               key={structure.id} 
