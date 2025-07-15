@@ -99,30 +99,79 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     const currentImage = ctImages[currentSlice];
     if (!currentImage) return;
 
-    // Render the actual DICOM image
+    // Set canvas size to a standard medical imaging size
+    const canvasSize = 512;
+    canvas.width = canvasSize;
+    canvas.height = canvasSize;
+
+    // Clear canvas with black background (standard for medical imaging)
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Render the actual DICOM image centered
     try {
-      DicomProcessor.renderImageToCanvas(
-        canvas, 
-        currentImage, 
-        windowLevel[0], 
-        windowWidth[0]
-      );
+      // Create a temporary canvas for the DICOM image
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d');
+      
+      if (tempCtx) {
+        DicomProcessor.renderImageToCanvas(
+          tempCanvas, 
+          currentImage, 
+          windowLevel[0], 
+          windowWidth[0]
+        );
+        
+        // Calculate scaling and centering
+        const imageAspect = currentImage.width / currentImage.height;
+        const canvasAspect = 1; // Square canvas
+        
+        let drawWidth = currentImage.width;
+        let drawHeight = currentImage.height;
+        
+        // Scale to fit canvas while maintaining aspect ratio
+        if (imageAspect > canvasAspect) {
+          // Image is wider - fit to width
+          drawWidth = canvasSize * 0.9; // Leave some margin
+          drawHeight = drawWidth / imageAspect;
+        } else {
+          // Image is taller - fit to height
+          drawHeight = canvasSize * 0.9; // Leave some margin
+          drawWidth = drawHeight * imageAspect;
+        }
+        
+        // Apply zoom
+        drawWidth *= zoom;
+        drawHeight *= zoom;
+        
+        // Center the image with pan offset
+        const drawX = (canvasSize - drawWidth) / 2 + pan.x;
+        const drawY = (canvasSize - drawHeight) / 2 + pan.y;
+        
+        // Draw the DICOM image centered and scaled
+        ctx.drawImage(tempCanvas, drawX, drawY, drawWidth, drawHeight);
+      }
     } catch (error) {
       console.error("Error rendering DICOM image:", error);
       
-      // Fallback to basic rendering
-      canvas.width = currentImage.width || 512;
-      canvas.height = currentImage.height || 512;
+      // Fallback rendering with centered mock image
+      const mockSize = 300;
+      const mockX = (canvasSize - mockSize) / 2;
+      const mockY = (canvasSize - mockSize) / 2;
       
-      ctx.fillStyle = "#000000";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#333333";
+      ctx.fillRect(mockX, mockY, mockSize, mockSize);
       
       // Mock anatomical structures
       ctx.strokeStyle = "#666666";
       ctx.lineWidth = 1;
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 8; i++) {
         ctx.beginPath();
-        ctx.arc(canvas.width/2 + Math.sin(i) * 100, canvas.height/2 + Math.cos(i) * 100, 20, 0, 2 * Math.PI);
+        ctx.arc(
+          canvasSize/2 + Math.sin(i) * 80, 
+          canvasSize/2 + Math.cos(i) * 80, 
+          15, 0, 2 * Math.PI
+        );
         ctx.stroke();
       }
     }
@@ -143,8 +192,8 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
             ctx.beginPath();
             contour.points.forEach((point, index) => {
               // Convert world coordinates to pixel coordinates (simplified)
-              const x = point[0] + canvas.width / 2;
-              const y = point[1] + canvas.height / 2;
+              const x = point[0] + canvasSize / 2;
+              const y = point[1] + canvasSize / 2;
               
               if (index === 0) {
                 ctx.moveTo(x, y);
@@ -169,25 +218,126 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.lineWidth = 2;
       ctx.setLineDash(structure.isEditing ? [5, 5] : []);
       
-      // Mock structure contour
-      const index = parseInt(structure.id.replace('edit_', ''));
+      // Mock structure contour - centered around image
+      const index = parseInt(structure.id.replace('edit_', '')) || 0;
       ctx.beginPath();
-      ctx.arc(200 + index * 50, 200, 30, 0, 2 * Math.PI);
+      ctx.arc(
+        canvasSize/2 - 60 + (index % 3) * 60, 
+        canvasSize/2 - 60 + Math.floor(index / 3) * 60, 
+        25, 0, 2 * Math.PI
+      );
       ctx.stroke();
       ctx.setLineDash([]);
     });
 
-    // Add slice indicator
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "14px monospace";
-    ctx.fillText(`Slice: ${currentSlice + 1}/${ctImages.length}`, 10, 25);
+    // Add overlay information
+    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.fillRect(10, 10, 200, 80);
     
-    // Add image info
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "12px monospace";
+    ctx.fillText(`Slice: ${currentSlice + 1}/${ctImages.length}`, 15, 25);
+    ctx.fillText(`WL: ${windowLevel[0]} WW: ${windowWidth[0]}`, 15, 40);
+    ctx.fillText(`Zoom: ${(zoom * 100).toFixed(0)}%`, 15, 55);
+    
+    if (currentImage.sliceLocation !== undefined) {
+      ctx.fillText(`Location: ${currentImage.sliceLocation.toFixed(1)}mm`, 15, 70);
+    }
+    
     if (currentImage.seriesInstanceUID) {
-      ctx.fillText(`Series: ${currentImage.seriesInstanceUID.substring(0, 20)}...`, 10, 45);
+      ctx.fillText(`Series: ${currentImage.seriesInstanceUID.substring(0, 25)}...`, 15, 85);
     }
     
   }, [currentSlice, structures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct]);
+
+  // Mouse wheel event for slice navigation
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      
+      // Only navigate slices if we're not in zoom mode
+      if (activeTool !== "zoom") {
+        const delta = e.deltaY > 0 ? 1 : -1;
+        setCurrentSlice(prev => {
+          const newSlice = prev + delta;
+          return Math.max(0, Math.min(ctImages.length - 1, newSlice));
+        });
+      } else {
+        // Zoom mode: use wheel for zooming
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;
+        setZoom(prev => Math.max(0.1, Math.min(5, prev * delta)));
+      }
+    };
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    
+    return () => {
+      canvas.removeEventListener('wheel', handleWheel);
+    };
+  }, [activeTool, ctImages.length]);
+
+  // Mouse events for panning and windowing
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    let isMouseDown = false;
+    let lastMousePos = { x: 0, y: 0 };
+
+    const handleMouseDown = (e: MouseEvent) => {
+      isMouseDown = true;
+      const rect = canvas.getBoundingClientRect();
+      lastMousePos = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isMouseDown) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const currentPos = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+
+      const deltaX = currentPos.x - lastMousePos.x;
+      const deltaY = currentPos.y - lastMousePos.y;
+
+      if (activeTool === "pan") {
+        setPan(prev => ({
+          x: prev.x + deltaX,
+          y: prev.y + deltaY
+        }));
+      } else if (activeTool === "windowing") {
+        // Standard DICOM windowing: horizontal = window width, vertical = window level
+        setWindowWidth(prev => [Math.max(1, prev[0] + deltaX * 4)]);
+        setWindowLevel(prev => [prev[0] - deltaY * 2]);
+      }
+
+      lastMousePos = currentPos;
+    };
+
+    const handleMouseUp = () => {
+      isMouseDown = false;
+    };
+
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('mouseleave', handleMouseUp);
+
+    return () => {
+      canvas.removeEventListener('mousedown', handleMouseDown);
+      canvas.removeEventListener('mousemove', handleMouseMove);
+      canvas.removeEventListener('mouseup', handleMouseUp);
+      canvas.removeEventListener('mouseleave', handleMouseUp);
+    };
+  }, [activeTool]);
 
   const handleToolChange = (tool: Tool) => {
     setActiveTool(tool);
@@ -363,18 +513,25 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
             <div className="relative">
               <canvas
                 ref={canvasRef}
-                className="border border-border shadow-elevation cursor-crosshair"
+                className="border border-border shadow-elevation"
                 style={{
-                  transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`,
-                  imageRendering: "pixelated"
+                  imageRendering: "pixelated",
+                  cursor: activeTool === "pan" ? "move" : 
+                         activeTool === "zoom" ? "zoom-in" : 
+                         activeTool === "windowing" ? "crosshair" :
+                         activeTool === "brush" ? "crosshair" :
+                         activeTool === "eraser" ? "crosshair" : "default"
                 }}
               />
               
-              {/* Overlay Info */}
-              <div className="absolute top-2 right-2 bg-black/80 text-white p-2 rounded text-xs font-mono">
-                <div>WL: {windowLevel[0]}</div>
-                <div>WW: {windowWidth[0]}</div>
-                <div>Zoom: {(zoom * 100).toFixed(0)}%</div>
+              {/* Tool instructions overlay */}
+              <div className="absolute bottom-2 left-2 bg-black/80 text-white p-2 rounded text-xs">
+                {activeTool === "select" && "Mouse wheel: Navigate slices"}
+                {activeTool === "pan" && "Drag: Pan image | Wheel: Navigate slices"}
+                {activeTool === "zoom" && "Wheel: Zoom in/out | Drag: Pan"}
+                {activeTool === "windowing" && "Drag: Adjust window/level | Wheel: Navigate slices"}
+                {activeTool === "brush" && "Click/Drag: Draw structure | Wheel: Navigate slices"}
+                {activeTool === "eraser" && "Click/Drag: Erase structure | Wheel: Navigate slices"}
               </div>
             </div>
           </div>
@@ -396,6 +553,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                   max={ctImages.length - 1}
                   step={1}
                   className="w-full"
+                  orientation="horizontal"
                 />
               </div>
             </div>
@@ -427,6 +585,18 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                     className="mt-2"
                   />
                   <span className="text-xs text-muted-foreground">{windowWidth[0]}</span>
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground">Zoom</label>
+                  <Slider
+                    value={[zoom]}
+                    onValueChange={([value]) => setZoom(value)}
+                    min={0.1}
+                    max={5}
+                    step={0.1}
+                    className="mt-2"
+                  />
+                  <span className="text-xs text-muted-foreground">{(zoom * 100).toFixed(0)}%</span>
                 </div>
               </div>
             </div>
