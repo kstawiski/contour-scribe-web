@@ -419,6 +419,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     };
   }, [activeTool, ctImages.length]);
 
+
   // COMPLETELY NEW APPROACH: React event handlers instead of addEventListener
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     console.log('🟢 REACT onMouseDown triggered!');
@@ -438,12 +439,16 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     }
     
     const rect = canvas.getBoundingClientRect();
-    const pos = {
+    const canvasPos = {
       x: e.clientX - rect.left,
       y: e.clientY - rect.top
     };
     
-    console.log('📍 Canvas position:', pos);
+    // Use raw canvas coordinates for drawing - no transformation needed
+    const pos = canvasPos;
+    
+    console.log('📍 Canvas position:', canvasPos);
+    console.log('🎯 Drawing position:', pos);
     console.log('📐 Canvas rect:', rect);
     
     if (activeTool === "brush") {
