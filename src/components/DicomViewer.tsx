@@ -160,7 +160,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.stroke();
     }
 
-    // Proper DICOM coordinate transformation
+    // Proper DICOM coordinate transformation with debugging
     const worldToCanvas = (worldX: number, worldY: number, worldZ?: number) => {
       // DICOM RT structures store coordinates in patient coordinate system (mm)
       // We need to transform them to image pixel coordinates
@@ -169,8 +169,18 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       const imagePosition = currentImage.imagePosition || [0, 0, 0];
       const pixelSpacing = [1, 1]; // Default - should be from DICOM tag (0028,0030)
       
+      // Debug logging for first few points
+      if (Math.random() < 0.01) { // Log ~1% of points to avoid spam
+        console.log('Coordinate transform debug:', {
+          worldCoords: [worldX, worldY, worldZ],
+          imagePosition,
+          pixelSpacing,
+          imageSize: [currentImage.width, currentImage.height],
+          imageBounds: { imageX, imageY, drawWidth, drawHeight }
+        });
+      }
+      
       // Transform world coordinates to image pixel coordinates
-      // This assumes a standard DICOM coordinate system
       const imagePixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
       const imagePixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
       
@@ -184,7 +194,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       };
     };
 
-    // Render RT structure contours with proper slice matching
+    // Render RT structure contours with debugging
     if (rtStruct?.structures) {
       rtStruct.structures.forEach((rtStructure, structIndex) => {
         const structure = structures.find(s => s.id === `rt_${structIndex}`);
@@ -197,7 +207,9 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         // Get current slice Z position
         const currentSliceZ = currentImage.sliceLocation;
         
-        rtStructure.contours.forEach(contour => {
+        console.log(`Slice ${currentSlice}: Z=${currentSliceZ}, Structure: ${rtStructure.name}`);
+        
+        rtStructure.contours.forEach((contour, contourIndex) => {
           if (contour.points.length === 0) return;
           
           // Check if this contour belongs to the current slice
@@ -214,11 +226,26 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           }
           
           if (shouldShowContour) {
+            console.log(`Drawing contour ${contourIndex} for ${rtStructure.name}:`, {
+              contourZ,
+              currentSliceZ,
+              pointCount: contour.points.length,
+              firstPoint: contour.points[0],
+              lastPoint: contour.points[contour.points.length - 1]
+            });
+            
             ctx.beginPath();
             let validPoints = 0;
             
             contour.points.forEach((point, index) => {
               const canvasPoint = worldToCanvas(point[0], point[1], point[2]);
+              
+              // Debug: draw point markers for first contour
+              if (contourIndex === 0 && index < 5) {
+                ctx.fillStyle = 'yellow';
+                ctx.fillRect(canvasPoint.x - 2, canvasPoint.y - 2, 4, 4);
+                ctx.fillStyle = structure.color;
+              }
               
               // Only draw if the point is within reasonable bounds
               if (canvasPoint.x >= imageX - 50 && canvasPoint.x <= imageX + drawWidth + 50 &&
@@ -268,9 +295,9 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.setLineDash([]);
     });
 
-    // Compact overlay information in corner
+    // Enhanced debug overlay with coordinate info
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.fillRect(10, 10, 180, 70);
+    ctx.fillRect(10, 10, 220, 110);
     
     ctx.fillStyle = "#ffffff";
     ctx.font = "11px monospace";
@@ -279,8 +306,41 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     ctx.fillText(`${(zoom * 100).toFixed(0)}%`, 15, 55);
     
     if (currentImage.sliceLocation !== undefined) {
-      ctx.fillText(`${currentImage.sliceLocation.toFixed(1)}mm`, 15, 70);
+      ctx.fillText(`Z: ${currentImage.sliceLocation.toFixed(1)}mm`, 15, 70);
     }
+    
+    if (currentImage.imagePosition) {
+      ctx.fillText(`Pos: [${currentImage.imagePosition.map(p => p.toFixed(1)).join(',')}]`, 15, 85);
+    }
+    
+    // Show number of visible contours on this slice
+    let contoursOnSlice = 0;
+    if (rtStruct?.structures) {
+      rtStruct.structures.forEach(structure => {
+        structure.contours.forEach(contour => {
+          if (contour.points.length > 0) {
+            const contourZ = contour.points[0][2];
+            const currentSliceZ = currentImage.sliceLocation;
+            if (currentSliceZ !== undefined && Math.abs(contourZ - currentSliceZ) <= 2.5) {
+              contoursOnSlice++;
+            }
+          }
+        });
+      });
+    }
+    ctx.fillText(`Contours: ${contoursOnSlice}`, 15, 100);
+    
+    // Add center crosshair for reference
+    ctx.strokeStyle = "#00ff00";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.moveTo(imageX + drawWidth/2 - 10, imageY + drawHeight/2);
+    ctx.lineTo(imageX + drawWidth/2 + 10, imageY + drawHeight/2);
+    ctx.moveTo(imageX + drawWidth/2, imageY + drawHeight/2 - 10);
+    ctx.lineTo(imageX + drawWidth/2, imageY + drawHeight/2 + 10);
+    ctx.stroke();
+    ctx.setLineDash([]);
     
   }, [currentSlice, structures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct]);
 
