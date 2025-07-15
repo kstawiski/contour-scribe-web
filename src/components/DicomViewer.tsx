@@ -39,6 +39,12 @@ interface Structure {
 
 type Tool = "select" | "pan" | "zoom" | "windowing" | "brush" | "eraser";
 
+interface DrawnContour {
+  points: { x: number; y: number }[];
+  sliceIndex: number;
+  structureId: string;
+}
+
 export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
@@ -50,6 +56,11 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   const [windowWidth, setWindowWidth] = useState([800]);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  
+  // Drawing state
+  const [drawnContours, setDrawnContours] = useState<DrawnContour[]>([]);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [currentPath, setCurrentPath] = useState<{ x: number; y: number }[]>([]);
 
   // Structure state - only include RT structures, remove default mock structures
   const [structures, setStructures] = useState<Structure[]>(() => {
@@ -291,9 +302,50 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.setLineDash([]);
     });
 
+    // Render user-drawn contours
+    drawnContours
+      .filter(contour => contour.sliceIndex === currentSlice)
+      .forEach(contour => {
+        const structure = structures.find(s => s.id === contour.structureId);
+        if (!structure?.visible) return;
+        
+        ctx.strokeStyle = structure.color;
+        ctx.lineWidth = 3;
+        ctx.setLineDash(structure.isEditing ? [5, 5] : []);
+        
+        if (contour.points.length > 1) {
+          ctx.beginPath();
+          ctx.moveTo(contour.points[0].x, contour.points[0].y);
+          contour.points.slice(1).forEach(point => {
+            ctx.lineTo(point.x, point.y);
+          });
+          ctx.stroke();
+        }
+        
+        ctx.setLineDash([]);
+      });
+    
+    // Render current drawing path
+    if (currentPath.length > 1) {
+      const editingStructure = structures.find(s => s.isEditing);
+      if (editingStructure) {
+        ctx.strokeStyle = editingStructure.color;
+        ctx.lineWidth = 3;
+        ctx.setLineDash([2, 2]);
+        
+        ctx.beginPath();
+        ctx.moveTo(currentPath[0].x, currentPath[0].y);
+        currentPath.slice(1).forEach(point => {
+          ctx.lineTo(point.x, point.y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
     // Enhanced debug overlay with coordinate info
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.fillRect(10, 10, 220, 110);
+    ctx.fillRect(10, 10, 220, 130);
     
     ctx.fillStyle = "#ffffff";
     ctx.font = "11px monospace";
@@ -324,7 +376,13 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         });
       });
     }
-    ctx.fillText(`Contours: ${contoursOnSlice}`, 15, 100);
+    
+    // Show drawing stats
+    const contoursOnCurrentSlice = drawnContours.filter(c => c.sliceIndex === currentSlice).length;
+    ctx.fillText(`Drawn: ${contoursOnCurrentSlice}`, 15, 115);
+    if (isDrawing) {
+      ctx.fillText(`Drawing: ${currentPath.length} pts`, 15, 130);
+    }
     // Add center crosshair for reference - image center
     ctx.strokeStyle = "#00ff00";
     ctx.lineWidth = 1;
@@ -337,7 +395,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     ctx.stroke();
     ctx.setLineDash([]);
     
-  }, [currentSlice, structures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct]);
+  }, [currentSlice, structures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawnContours, currentPath, isDrawing]);
 
   // Mouse wheel event for slice navigation
   useEffect(() => {
@@ -368,7 +426,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     };
   }, [activeTool, ctImages.length]);
 
-  // Mouse events for panning and windowing
+  // Enhanced mouse events for drawing, panning, and windowing
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -379,20 +437,49 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     const handleMouseDown = (e: MouseEvent) => {
       isMouseDown = true;
       const rect = canvas.getBoundingClientRect();
-      lastMousePos = {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
+      const currentPos = {
+        x: (e.clientX - rect.left) * (canvas.width / rect.width),
+        y: (e.clientY - rect.top) * (canvas.height / rect.height)
       };
+      lastMousePos = currentPos;
+
+      if (activeTool === "brush") {
+        const editingStructure = structures.find(s => s.isEditing);
+        if (editingStructure) {
+          setIsDrawing(true);
+          setCurrentPath([currentPos]);
+        } else {
+          toast({
+            title: "No structure selected",
+            description: "Please select a structure to edit first",
+            variant: "destructive"
+          });
+        }
+      } else if (activeTool === "eraser") {
+        // Find and remove contours near click point
+        const eraseRadius = 20;
+        setDrawnContours(prev => prev.filter(contour => {
+          if (contour.sliceIndex !== currentSlice) return true;
+          
+          return !contour.points.some(point => {
+            const distance = Math.sqrt(
+              Math.pow(point.x - currentPos.x, 2) + 
+              Math.pow(point.y - currentPos.y, 2)
+            );
+            return distance <= eraseRadius;
+          });
+        }));
+      }
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isMouseDown) return;
-
       const rect = canvas.getBoundingClientRect();
       const currentPos = {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
+        x: (e.clientX - rect.left) * (canvas.width / rect.width),
+        y: (e.clientY - rect.top) * (canvas.height / rect.height)
       };
+
+      if (!isMouseDown) return;
 
       const deltaX = currentPos.x - lastMousePos.x;
       const deltaY = currentPos.y - lastMousePos.y;
@@ -406,12 +493,53 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         // Standard DICOM windowing: horizontal = window width, vertical = window level
         setWindowWidth(prev => [Math.max(1, prev[0] + deltaX * 4)]);
         setWindowLevel(prev => [prev[0] - deltaY * 2]);
+      } else if (activeTool === "brush" && isDrawing) {
+        // Add point to current path if it's far enough from last point
+        const lastPoint = currentPath[currentPath.length - 1];
+        if (!lastPoint || Math.sqrt(Math.pow(currentPos.x - lastPoint.x, 2) + Math.pow(currentPos.y - lastPoint.y, 2)) > 3) {
+          setCurrentPath(prev => [...prev, currentPos]);
+        }
+      } else if (activeTool === "eraser" && isMouseDown) {
+        // Continue erasing
+        const eraseRadius = 20;
+        setDrawnContours(prev => prev.filter(contour => {
+          if (contour.sliceIndex !== currentSlice) return true;
+          
+          return !contour.points.some(point => {
+            const distance = Math.sqrt(
+              Math.pow(point.x - currentPos.x, 2) + 
+              Math.pow(point.y - currentPos.y, 2)
+            );
+            return distance <= eraseRadius;
+          });
+        }));
       }
 
       lastMousePos = currentPos;
     };
 
     const handleMouseUp = () => {
+      if (activeTool === "brush" && isDrawing && currentPath.length > 2) {
+        const editingStructure = structures.find(s => s.isEditing);
+        if (editingStructure) {
+          // Save the drawn contour
+          const newContour: DrawnContour = {
+            points: [...currentPath],
+            sliceIndex: currentSlice,
+            structureId: editingStructure.id
+          };
+          
+          setDrawnContours(prev => [...prev, newContour]);
+          
+          toast({
+            title: "Contour drawn",
+            description: `Added contour to ${editingStructure.name}`,
+          });
+        }
+      }
+      
+      setIsDrawing(false);
+      setCurrentPath([]);
       isMouseDown = false;
     };
 
@@ -426,7 +554,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       canvas.removeEventListener('mouseup', handleMouseUp);
       canvas.removeEventListener('mouseleave', handleMouseUp);
     };
-  }, [activeTool]);
+  }, [activeTool, currentSlice, structures, currentPath, isDrawing, toast]);
 
   const handleToolChange = (tool: Tool) => {
     setActiveTool(tool);
