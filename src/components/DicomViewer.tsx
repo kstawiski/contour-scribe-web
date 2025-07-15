@@ -434,21 +434,26 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     let isMouseDown = false;
     let lastMousePos = { x: 0, y: 0 };
 
-    const getMousePos = (e: MouseEvent) => {
+    const getMousePos = (e: MouseEvent | PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
-      return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
-      };
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      console.log('Raw mouse coords:', e.clientX, e.clientY, 'Canvas rect:', rect.left, rect.top, 'Final:', x, y);
+      return { x, y };
     };
 
-    const handleMouseDown = (e: MouseEvent) => {
+    const handleMouseDown = (e: MouseEvent | PointerEvent) => {
       e.preventDefault();
+      e.stopPropagation();
       isMouseDown = true;
       const pos = getMousePos(e);
       lastMousePos = pos;
       
-      console.log('Mouse down at:', pos, 'Tool:', activeTool);
+      console.log('=== MOUSE DOWN EVENT ===');
+      console.log('Position:', pos);
+      console.log('Active tool:', activeTool);
+      console.log('Event type:', e.type);
+      console.log('Target:', e.target);
 
       if (activeTool === "brush") {
         // Start drawing - auto-create structure if needed
@@ -487,12 +492,14 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       }
     };
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const handleMouseMove = (e: MouseEvent | PointerEvent) => {
       if (!isMouseDown) return;
       
       const pos = getMousePos(e);
       const deltaX = pos.x - lastMousePos.x;
       const deltaY = pos.y - lastMousePos.y;
+
+      console.log('Mouse move:', pos, 'Tool:', activeTool, 'Drawing:', isDrawing);
 
       if (activeTool === "pan") {
         setPan(prev => ({
@@ -557,6 +564,8 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       console.log('Mouse up - finished drawing');
     };
 
+    console.log('Adding event listeners to canvas...');
+    
     // Add event listeners
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mousemove', handleMouseMove);
@@ -753,16 +762,20 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
             <div className="relative w-full h-full flex items-center justify-center">
               <canvas
                 ref={canvasRef}
-                className="border border-border shadow-elevation"
+                className="border border-border shadow-elevation cursor-crosshair"
                 style={{
                   imageRendering: "pixelated",
-                  width: "min(calc(100vh - 200px), calc(100vw - 700px))", // Full responsive sizing
+                  width: "min(calc(100vh - 200px), calc(100vw - 700px))",
                   height: "min(calc(100vh - 200px), calc(100vw - 700px))",
-                  cursor: activeTool === "pan" ? "move" : 
-                         activeTool === "zoom" ? "zoom-in" : 
-                         activeTool === "windowing" ? "crosshair" :
-                         activeTool === "brush" ? "crosshair" :
-                         activeTool === "eraser" ? "crosshair" : "default"
+                  touchAction: "none", // Prevent default touch behaviors
+                  userSelect: "none", // Prevent text selection
+                  pointerEvents: "auto" // Ensure pointer events work
+                }}
+                onMouseDown={(e) => {
+                  console.log('Direct onMouseDown triggered!', e.clientX, e.clientY);
+                }}
+                onPointerDown={(e) => {
+                  console.log('Direct onPointerDown triggered!', e.clientX, e.clientY);
                 }}
               />
               
