@@ -17,13 +17,15 @@ import {
   Layers,
   Eye,
   EyeOff,
-  Plus
+  Plus,
+  ArrowLeft
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface DicomViewerProps {
   ctImages: ArrayBuffer[];
   rtStruct?: ArrayBuffer;
+  onBack?: () => void;
 }
 
 interface Structure {
@@ -36,7 +38,7 @@ interface Structure {
 
 type Tool = "select" | "pan" | "zoom" | "windowing" | "brush" | "eraser";
 
-export const DicomViewer = ({ ctImages, rtStruct }: DicomViewerProps) => {
+export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
 
@@ -209,6 +211,12 @@ export const DicomViewer = ({ ctImages, rtStruct }: DicomViewerProps) => {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {onBack && (
+                <Button variant="outline" size="sm" onClick={onBack}>
+                  <ArrowLeft className="w-4 h-4" />
+                  Back
+                </Button>
+              )}
               <Button variant="outline" size="sm" onClick={resetView}>
                 <RotateCcw className="w-4 h-4" />
                 Reset

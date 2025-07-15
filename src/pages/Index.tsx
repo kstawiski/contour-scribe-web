@@ -23,6 +23,7 @@ const Index = () => {
       <DicomViewer 
         ctImages={dicomData.ctImages} 
         rtStruct={dicomData.rtStruct}
+        onBack={handleBackToLoader}
       />
     );
   }
