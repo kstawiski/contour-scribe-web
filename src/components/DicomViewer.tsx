@@ -303,14 +303,11 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     });
 
     // Render user-drawn contours
-    console.log('Rendering contours. Total:', drawnContours.length, 'Current slice:', currentSlice);
     drawnContours
       .filter(contour => contour.sliceIndex === currentSlice)
       .forEach((contour, index) => {
         const structure = structures.find(s => s.id === contour.structureId);
         if (!structure?.visible) return;
-        
-        console.log('Drawing contour', index, 'with', contour.points.length, 'points');
         
         ctx.strokeStyle = structure.color;
         ctx.lineWidth = 3;
@@ -328,27 +325,21 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         ctx.setLineDash([]);
       });
     
-    // Render current drawing path  
+    // Render current drawing path (live preview)
     if (currentPath.length > 1) {
       const editingStructure = structures.find(s => s.isEditing);
       if (editingStructure) {
-        const canvasRect = canvasRef.current?.getBoundingClientRect();
-        if (canvasRect) {
-          const scaleX = canvasSize / canvasRect.width;
-          const scaleY = canvasSize / canvasRect.height;
-          
-          ctx.strokeStyle = editingStructure.color;
-          ctx.lineWidth = 3;
-          ctx.setLineDash([2, 2]);
-          
-          ctx.beginPath();
-          ctx.moveTo(currentPath[0].x * scaleX, currentPath[0].y * scaleY);
-          currentPath.slice(1).forEach(point => {
-            ctx.lineTo(point.x * scaleX, point.y * scaleY);
-          });
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
+        ctx.strokeStyle = editingStructure.color;
+        ctx.lineWidth = 3;
+        ctx.setLineDash([2, 2]);
+        
+        ctx.beginPath();
+        ctx.moveTo(currentPath[0].x, currentPath[0].y);
+        currentPath.slice(1).forEach(point => {
+          ctx.lineTo(point.x, point.y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
 
@@ -435,7 +426,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     };
   }, [activeTool, ctImages.length]);
 
-  // Enhanced mouse events for drawing, panning, and windowing
+  // Simplified mouse events for drawing
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -443,71 +434,65 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     let isMouseDown = false;
     let lastMousePos = { x: 0, y: 0 };
 
-    const handleMouseDown = (e: MouseEvent) => {
-      isMouseDown = true;
+    const getMousePos = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
-      // Fix coordinate calculation - don't scale by canvas internal size
-      const currentPos = {
+      return {
         x: e.clientX - rect.left,
         y: e.clientY - rect.top
       };
-      lastMousePos = currentPos;
+    };
+
+    const handleMouseDown = (e: MouseEvent) => {
+      e.preventDefault();
+      isMouseDown = true;
+      const pos = getMousePos(e);
+      lastMousePos = pos;
       
-      console.log('Mouse down:', currentPos, 'Tool:', activeTool);
+      console.log('Mouse down at:', pos, 'Tool:', activeTool);
 
       if (activeTool === "brush") {
-        const editingStructure = structures.find(s => s.isEditing);
-        if (editingStructure) {
-          setIsDrawing(true);
-          setCurrentPath([currentPos]);
-          console.log('Started drawing for structure:', editingStructure.name);
-        } else {
-          console.log("No editing structure found for brush tool");
-          // Auto-create a new structure if none is editing
+        // Start drawing - auto-create structure if needed
+        let editingStructure = structures.find(s => s.isEditing);
+        if (!editingStructure) {
           const newStructure: Structure = {
-            id: `edit_${Date.now()}`,
-            name: `New_Structure_${structures.length + 1}`,
-            color: "#ff8844",
+            id: `draw_${Date.now()}`,
+            name: `New_${Date.now()}`,
+            color: "#ff4444",
             visible: true,
             isEditing: true
           };
-          
           setStructures(prev => [...prev, newStructure]);
-          setIsDrawing(true);
-          setCurrentPath([currentPos]);
-          console.log('Auto-created structure and started drawing');
+          editingStructure = newStructure;
         }
+        
+        setIsDrawing(true);
+        setCurrentPath([pos]);
+        console.log('Started drawing');
       } else if (activeTool === "eraser") {
-        // Find and remove contours near click point
-        const eraseRadius = 20;
-        const initialCount = drawnContours.length;
-        setDrawnContours(prev => prev.filter(contour => {
-          if (contour.sliceIndex !== currentSlice) return true;
-          
-          return !contour.points.some(point => {
-            const distance = Math.sqrt(
-              Math.pow(point.x - currentPos.x, 2) + 
-              Math.pow(point.y - currentPos.y, 2)
-            );
-            return distance <= eraseRadius;
+        // Erase contours near click
+        const eraseRadius = 30;
+        setDrawnContours(prev => {
+          const filtered = prev.filter(contour => {
+            if (contour.sliceIndex !== currentSlice) return true;
+            
+            return !contour.points.some(point => {
+              const dx = point.x - pos.x;
+              const dy = point.y - pos.y;
+              return Math.sqrt(dx * dx + dy * dy) <= eraseRadius;
+            });
           });
-        }));
-        console.log('Erasing near:', currentPos, 'Initial contours:', initialCount);
+          console.log('Erased contours, remaining:', filtered.length);
+          return filtered;
+        });
       }
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      // Fix coordinate calculation
-      const currentPos = {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
-      };
-
       if (!isMouseDown) return;
-
-      const deltaX = currentPos.x - lastMousePos.x;
-      const deltaY = currentPos.y - lastMousePos.y;
+      
+      const pos = getMousePos(e);
+      const deltaX = pos.x - lastMousePos.x;
+      const deltaY = pos.y - lastMousePos.y;
 
       if (activeTool === "pan") {
         setPan(prev => ({
@@ -515,85 +500,82 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           y: prev.y + deltaY
         }));
       } else if (activeTool === "windowing") {
-        // Standard DICOM windowing: horizontal = window width, vertical = window level
         setWindowWidth(prev => [Math.max(1, prev[0] + deltaX * 4)]);
         setWindowLevel(prev => [prev[0] - deltaY * 2]);
       } else if (activeTool === "brush" && isDrawing) {
-        // Add point to current path if it's far enough from last point
+        // Add to drawing path
         const lastPoint = currentPath[currentPath.length - 1];
-        if (!lastPoint || Math.sqrt(Math.pow(currentPos.x - lastPoint.x, 2) + Math.pow(currentPos.y - lastPoint.y, 2)) > 3) {
-          setCurrentPath(prev => [...prev, currentPos]);
-          console.log('Added point to path, total points:', currentPath.length + 1);
+        if (!lastPoint || Math.sqrt((pos.x - lastPoint.x) ** 2 + (pos.y - lastPoint.y) ** 2) > 2) {
+          setCurrentPath(prev => [...prev, pos]);
+          console.log('Added point, total:', currentPath.length + 1);
         }
-      } else if (activeTool === "eraser" && isMouseDown) {
-        // Continue erasing
-        const eraseRadius = 20;
-        setDrawnContours(prev => prev.filter(contour => {
-          if (contour.sliceIndex !== currentSlice) return true;
-          
-          return !contour.points.some(point => {
-            const distance = Math.sqrt(
-              Math.pow(point.x - currentPos.x, 2) + 
-              Math.pow(point.y - currentPos.y, 2)
-            );
-            return distance <= eraseRadius;
+      } else if (activeTool === "eraser") {
+        // Continue erasing while dragging
+        const eraseRadius = 30;
+        setDrawnContours(prev => {
+          return prev.filter(contour => {
+            if (contour.sliceIndex !== currentSlice) return true;
+            
+            return !contour.points.some(point => {
+              const dx = point.x - pos.x;
+              const dy = point.y - pos.y;
+              return Math.sqrt(dx * dx + dy * dy) <= eraseRadius;
+            });
           });
-        }));
+        });
       }
 
-      lastMousePos = currentPos;
+      lastMousePos = pos;
     };
 
     const handleMouseUp = () => {
-      if (activeTool === "brush" && isDrawing && currentPath.length > 2) {
+      if (activeTool === "brush" && isDrawing && currentPath.length > 3) {
         const editingStructure = structures.find(s => s.isEditing);
         if (editingStructure) {
-          // Convert canvas coordinates to actual canvas coordinates for storage
-          const canvasRect = canvas.getBoundingClientRect();
-          const scaleX = canvas.width / canvasRect.width;
-          const scaleY = canvas.height / canvasRect.height;
-          
-          const scaledPoints = currentPath.map(point => ({
-            x: point.x * scaleX,
-            y: point.y * scaleY
-          }));
-          
-          // Save the drawn contour
           const newContour: DrawnContour = {
-            points: scaledPoints,
+            points: currentPath.map(p => ({ x: p.x, y: p.y })),
             sliceIndex: currentSlice,
             structureId: editingStructure.id
           };
           
           setDrawnContours(prev => {
             const updated = [...prev, newContour];
-            console.log('Saved contour, total contours:', updated.length, 'Points:', scaledPoints.length);
+            console.log('Saved contour with', newContour.points.length, 'points. Total contours:', updated.length);
             return updated;
           });
           
           toast({
             title: "Contour drawn",
-            description: `Added contour to ${editingStructure.name}`,
+            description: `Saved ${newContour.points.length} points`,
           });
         }
       }
       
-      console.log('Mouse up - isDrawing:', isDrawing, 'currentPath length:', currentPath.length);
       setIsDrawing(false);
       setCurrentPath([]);
       isMouseDown = false;
+      console.log('Mouse up - finished drawing');
     };
 
+    // Add event listeners
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mouseup', handleMouseUp);
     canvas.addEventListener('mouseleave', handleMouseUp);
+    
+    // Also handle pointer events for touch devices
+    canvas.addEventListener('pointerdown', handleMouseDown as any);
+    canvas.addEventListener('pointermove', handleMouseMove as any);
+    canvas.addEventListener('pointerup', handleMouseUp);
 
     return () => {
       canvas.removeEventListener('mousedown', handleMouseDown);
       canvas.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('mouseup', handleMouseUp);
       canvas.removeEventListener('mouseleave', handleMouseUp);
+      canvas.removeEventListener('pointerdown', handleMouseDown as any);
+      canvas.removeEventListener('pointermove', handleMouseMove as any);
+      canvas.removeEventListener('pointerup', handleMouseUp);
     };
   }, [activeTool, currentSlice, structures, currentPath, isDrawing, drawnContours, toast]);
 
