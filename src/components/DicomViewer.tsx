@@ -462,11 +462,20 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           setCurrentPath([currentPos]);
           console.log('Started drawing for structure:', editingStructure.name);
         } else {
-          toast({
-            title: "No structure selected",
-            description: "Please select a structure to edit first",
-            variant: "destructive"
-          });
+          console.log("No editing structure found for brush tool");
+          // Auto-create a new structure if none is editing
+          const newStructure: Structure = {
+            id: `edit_${Date.now()}`,
+            name: `New_Structure_${structures.length + 1}`,
+            color: "#ff8844",
+            visible: true,
+            isEditing: true
+          };
+          
+          setStructures(prev => [...prev, newStructure]);
+          setIsDrawing(true);
+          setCurrentPath([currentPos]);
+          console.log('Auto-created structure and started drawing');
         }
       } else if (activeTool === "eraser") {
         // Find and remove contours near click point
@@ -569,6 +578,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         }
       }
       
+      console.log('Mouse up - isDrawing:', isDrawing, 'currentPath length:', currentPath.length);
       setIsDrawing(false);
       setCurrentPath([]);
       isMouseDown = false;
@@ -585,7 +595,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       canvas.removeEventListener('mouseup', handleMouseUp);
       canvas.removeEventListener('mouseleave', handleMouseUp);
     };
-  }, [activeTool, currentSlice, structures, currentPath, isDrawing, toast]);
+  }, [activeTool, currentSlice, structures, currentPath, isDrawing, drawnContours, toast]);
 
   const handleToolChange = (tool: Tool) => {
     setActiveTool(tool);
