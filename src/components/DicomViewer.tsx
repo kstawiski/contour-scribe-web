@@ -51,7 +51,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
 
-  // Structure state - combine RT structures with editable ones
+  // Structure state - only include RT structures, remove default mock structures
   const [structures, setStructures] = useState<Structure[]>(() => {
     const editableStructures: Structure[] = [];
     
@@ -68,23 +68,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       });
     }
     
-    // Add some default editable structures
-    const defaultStructures = [
-      { name: "New_Structure_1", color: "#ff4444" },
-      { name: "New_Structure_2", color: "#44ff44" },
-      { name: "New_Structure_3", color: "#4444ff" }
-    ];
-    
-    defaultStructures.forEach((struct, index) => {
-      editableStructures.push({
-        id: `edit_${index}`,
-        name: struct.name,
-        color: struct.color,
-        visible: true,
-        isEditing: false
-      });
-    });
-    
     return editableStructures;
   });
 
@@ -99,8 +82,8 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     const currentImage = ctImages[currentSlice];
     if (!currentImage) return;
 
-    // Set canvas size to a standard medical imaging size
-    const canvasSize = 512;
+    // Set canvas to fill available space - much larger than before
+    const canvasSize = 600; // Increased from 512
     canvas.width = canvasSize;
     canvas.height = canvasSize;
 
@@ -108,21 +91,19 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     ctx.fillStyle = "#000000";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Calculate image positioning and scaling
+    // Calculate image positioning and scaling to fill more of the canvas
     const imageAspect = currentImage.width / currentImage.height;
     const canvasAspect = 1; // Square canvas
     
     let drawWidth = currentImage.width;
     let drawHeight = currentImage.height;
     
-    // Scale to fit canvas while maintaining aspect ratio
-    const maxSize = canvasSize * 0.9; // Leave some margin
+    // Scale to fit canvas while maintaining aspect ratio - use more space
+    const maxSize = canvasSize * 0.95; // Use 95% of canvas instead of 90%
     if (imageAspect > canvasAspect) {
-      // Image is wider - fit to width
       drawWidth = maxSize;
       drawHeight = drawWidth / imageAspect;
     } else {
-      // Image is taller - fit to height
       drawHeight = maxSize;
       drawWidth = drawHeight * imageAspect;
     }
@@ -147,7 +128,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
 
     // Render the actual DICOM image
     try {
-      // Create a temporary canvas for the DICOM image
       const tempCanvas = document.createElement('canvas');
       const tempCtx = tempCanvas.getContext('2d');
       
@@ -169,26 +149,30 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.fillStyle = "#333333";
       ctx.fillRect(imageX, imageY, drawWidth, drawHeight);
       
-      // Mock anatomical structures
+      // Add a simple cross-hair in center for reference
       ctx.strokeStyle = "#666666";
       ctx.lineWidth = 1;
-      for (let i = 0; i < 8; i++) {
-        ctx.beginPath();
-        ctx.arc(
-          imageX + drawWidth/2 + Math.sin(i) * drawWidth * 0.2, 
-          imageY + drawHeight/2 + Math.cos(i) * drawHeight * 0.2, 
-          15, 0, 2 * Math.PI
-        );
-        ctx.stroke();
-      }
+      ctx.beginPath();
+      ctx.moveTo(imageX + drawWidth/2 - 20, imageY + drawHeight/2);
+      ctx.lineTo(imageX + drawWidth/2 + 20, imageY + drawHeight/2);
+      ctx.moveTo(imageX + drawWidth/2, imageY + drawHeight/2 - 20);
+      ctx.lineTo(imageX + drawWidth/2, imageY + drawHeight/2 + 20);
+      ctx.stroke();
     }
 
-    // Function to convert DICOM world coordinates to canvas coordinates
-    const worldToCanvas = (worldX: number, worldY: number) => {
-      // For now, assume a simple mapping - in real implementation, 
-      // this would use the DICOM image position and orientation matrices
-      const normalizedX = (worldX + currentImage.width / 2) / currentImage.width;
-      const normalizedY = (worldY + currentImage.height / 2) / currentImage.height;
+    // Improved coordinate transformation for DICOM structures
+    const worldToCanvas = (worldX: number, worldY: number, worldZ?: number) => {
+      // More accurate coordinate transformation
+      // Assume DICOM coordinates are in mm, need to convert to pixel space
+      // This is a simplified transformation - real implementation would use 
+      // Image Position Patient and Image Orientation Patient DICOM tags
+      
+      // For now, assume the image center is at world coordinate (0,0)
+      // and scale appropriately
+      const pixelSpacing = 1; // mm per pixel - would come from DICOM tags
+      
+      const normalizedX = 0.5 + (worldX / (currentImage.width * pixelSpacing * 0.5));
+      const normalizedY = 0.5 - (worldY / (currentImage.height * pixelSpacing * 0.5)); // Flip Y
       
       return {
         x: imageX + normalizedX * drawWidth,
@@ -196,7 +180,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       };
     };
 
-    // Render RT structure contours if available
+    // Render RT structure contours if available - more precise slice matching
     if (rtStruct?.structures) {
       rtStruct.structures.forEach((rtStructure, structIndex) => {
         const structure = structures.find(s => s.id === `rt_${structIndex}`);
@@ -206,20 +190,26 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         ctx.lineWidth = 2;
         ctx.setLineDash(structure.isEditing ? [5, 5] : []);
         
-        // Render contours for current slice or nearby slices
+        // Only show contours that exactly match the current slice or are very close
         rtStructure.contours.forEach(contour => {
-          // More flexible slice matching - check if contour is within a reasonable range
-          const sliceDifference = Math.abs(contour.sliceIndex - currentSlice);
           const currentSliceLocation = currentImage.sliceLocation || currentSlice * 5;
           
-          // Show contour if it's on current slice or if slice locations are close
-          const shouldShowContour = sliceDifference <= 1 || 
-            (contour.points.length > 0 && Math.abs(contour.points[0][2] - currentSliceLocation) < 2.5);
+          // Much more precise slice matching - only show if exactly on this slice
+          let shouldShowContour = false;
+          
+          if (contour.sliceIndex === currentSlice) {
+            shouldShowContour = true;
+          } else if (contour.points.length > 0) {
+            // Check Z coordinate of contour points
+            const contourZ = contour.points[0][2];
+            const sliceTolerance = 1.0; // mm tolerance
+            shouldShowContour = Math.abs(contourZ - currentSliceLocation) < sliceTolerance;
+          }
           
           if (shouldShowContour && contour.points.length > 0) {
             ctx.beginPath();
             contour.points.forEach((point, index) => {
-              const canvasPoint = worldToCanvas(point[0], point[1]);
+              const canvasPoint = worldToCanvas(point[0], point[1], point[2]);
               
               if (index === 0) {
                 ctx.moveTo(canvasPoint.x, canvasPoint.y);
@@ -236,43 +226,43 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       });
     }
 
-    // Render editable structures (positioned relative to image)
+    // Remove the mock circular structures - they were confusing
+    // Only render user-created structures when they're actually being edited
     structures.forEach((structure) => {
-      if (!structure.visible || structure.id.startsWith('rt_')) return;
+      if (!structure.visible || structure.id.startsWith('rt_') || !structure.isEditing) return;
       
       ctx.strokeStyle = structure.color;
-      ctx.lineWidth = 2;
-      ctx.setLineDash(structure.isEditing ? [5, 5] : []);
+      ctx.lineWidth = 3;
+      ctx.setLineDash([5, 5]);
       
-      // Position mock structures relative to the image center
-      const index = parseInt(structure.id.replace('edit_', '')) || 0;
+      // Show editing indicator in center
       const centerX = imageX + drawWidth / 2;
       const centerY = imageY + drawHeight / 2;
       
       ctx.beginPath();
-      ctx.arc(
-        centerX - 60 + (index % 3) * 40, 
-        centerY - 60 + Math.floor(index / 3) * 40, 
-        Math.min(drawWidth, drawHeight) * 0.05, // Scale with image
-        0, 2 * Math.PI
-      );
+      ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
       ctx.stroke();
+      
+      // Add text indicating editing mode
+      ctx.fillStyle = structure.color;
+      ctx.font = "14px Arial";
+      ctx.fillText("Editing: " + structure.name, centerX + 15, centerY);
+      
       ctx.setLineDash([]);
     });
 
-    // Add overlay information
+    // Compact overlay information in corner
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.fillRect(10, 10, 220, 90);
+    ctx.fillRect(10, 10, 180, 70);
     
     ctx.fillStyle = "#ffffff";
-    ctx.font = "12px monospace";
-    ctx.fillText(`Slice: ${currentSlice + 1}/${ctImages.length}`, 15, 25);
-    ctx.fillText(`WL: ${windowLevel[0]} WW: ${windowWidth[0]}`, 15, 40);
-    ctx.fillText(`Zoom: ${(zoom * 100).toFixed(0)}%`, 15, 55);
-    ctx.fillText(`Pan: ${pan.x.toFixed(0)}, ${pan.y.toFixed(0)}`, 15, 70);
+    ctx.font = "11px monospace";
+    ctx.fillText(`${currentSlice + 1}/${ctImages.length}`, 15, 25);
+    ctx.fillText(`WL:${windowLevel[0]} WW:${windowWidth[0]}`, 15, 40);
+    ctx.fillText(`${(zoom * 100).toFixed(0)}%`, 15, 55);
     
     if (currentImage.sliceLocation !== undefined) {
-      ctx.fillText(`Location: ${currentImage.sliceLocation.toFixed(1)}mm`, 15, 85);
+      ctx.fillText(`${currentImage.sliceLocation.toFixed(1)}mm`, 15, 70);
     }
     
   }, [currentSlice, structures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct]);
@@ -535,14 +525,16 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
 
         {/* Viewer Canvas */}
         <div className="flex-1 flex">
-          {/* Canvas Container */}
-          <div className="flex-1 bg-black flex items-center justify-center p-4">
-            <div className="relative">
+          {/* Canvas Container - Make it stretch more */}
+          <div className="flex-1 bg-black flex items-center justify-center p-2">
+            <div className="relative w-full h-full flex items-center justify-center">
               <canvas
                 ref={canvasRef}
-                className="border border-border shadow-elevation"
+                className="border border-border shadow-elevation max-w-full max-h-full"
                 style={{
                   imageRendering: "pixelated",
+                  width: "min(80vh, 80vw)", // Responsive sizing
+                  height: "min(80vh, 80vw)",
                   cursor: activeTool === "pan" ? "move" : 
                          activeTool === "zoom" ? "zoom-in" : 
                          activeTool === "windowing" ? "crosshair" :
