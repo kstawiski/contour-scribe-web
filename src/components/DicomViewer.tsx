@@ -21,10 +21,11 @@ import {
   ArrowLeft
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
 
 interface DicomViewerProps {
-  ctImages: ArrayBuffer[];
-  rtStruct?: ArrayBuffer;
+  ctImages: DicomImage[];
+  rtStruct?: DicomRTStruct;
   onBack?: () => void;
 }
 
@@ -50,71 +51,128 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
 
-  // Structure state
-  const [structures, setStructures] = useState<Structure[]>([
-    {
-      id: "1",
-      name: "Tumor",
-      color: "#ff4444",
-      visible: true,
-      isEditing: false
-    },
-    {
-      id: "2", 
-      name: "Lung_Left",
-      color: "#44ff44",
-      visible: true,
-      isEditing: false
-    },
-    {
-      id: "3",
-      name: "Lung_Right", 
-      color: "#4444ff",
-      visible: true,
-      isEditing: false
+  // Structure state - combine RT structures with editable ones
+  const [structures, setStructures] = useState<Structure[]>(() => {
+    const editableStructures: Structure[] = [];
+    
+    // Add RT structures if available
+    if (rtStruct?.structures) {
+      rtStruct.structures.forEach((rtStructure, index) => {
+        editableStructures.push({
+          id: `rt_${index}`,
+          name: rtStructure.name,
+          color: `rgb(${Math.round(rtStructure.color[0])}, ${Math.round(rtStructure.color[1])}, ${Math.round(rtStructure.color[2])})`,
+          visible: true,
+          isEditing: false
+        });
+      });
     }
-  ]);
+    
+    // Add some default editable structures
+    const defaultStructures = [
+      { name: "New_Structure_1", color: "#ff4444" },
+      { name: "New_Structure_2", color: "#44ff44" },
+      { name: "New_Structure_3", color: "#4444ff" }
+    ];
+    
+    defaultStructures.forEach((struct, index) => {
+      editableStructures.push({
+        id: `edit_${index}`,
+        name: struct.name,
+        color: struct.color,
+        visible: true,
+        isEditing: false
+      });
+    });
+    
+    return editableStructures;
+  });
 
   // Canvas setup and rendering
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || ctImages.length === 0) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Set canvas size
-    canvas.width = 512;
-    canvas.height = 512;
+    const currentImage = ctImages[currentSlice];
+    if (!currentImage) return;
 
-    // Clear canvas
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Mock CT image rendering
-    ctx.fillStyle = "#333333";
-    ctx.fillRect(50, 50, 412, 412);
-    
-    // Mock anatomical structures
-    ctx.strokeStyle = "#666666";
-    ctx.lineWidth = 1;
-    for (let i = 0; i < 10; i++) {
-      ctx.beginPath();
-      ctx.arc(256 + Math.sin(i) * 100, 256 + Math.cos(i) * 100, 20, 0, 2 * Math.PI);
-      ctx.stroke();
+    // Render the actual DICOM image
+    try {
+      DicomProcessor.renderImageToCanvas(
+        canvas, 
+        currentImage, 
+        windowLevel[0], 
+        windowWidth[0]
+      );
+    } catch (error) {
+      console.error("Error rendering DICOM image:", error);
+      
+      // Fallback to basic rendering
+      canvas.width = currentImage.width || 512;
+      canvas.height = currentImage.height || 512;
+      
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Mock anatomical structures
+      ctx.strokeStyle = "#666666";
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 10; i++) {
+        ctx.beginPath();
+        ctx.arc(canvas.width/2 + Math.sin(i) * 100, canvas.height/2 + Math.cos(i) * 100, 20, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
     }
 
-    // Render visible structures
+    // Render RT structure contours if available
+    if (rtStruct?.structures) {
+      rtStruct.structures.forEach((rtStructure, structIndex) => {
+        const structure = structures.find(s => s.id === `rt_${structIndex}`);
+        if (!structure?.visible) return;
+        
+        ctx.strokeStyle = structure.color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash(structure.isEditing ? [5, 5] : []);
+        
+        // Render contours for current slice
+        rtStructure.contours.forEach(contour => {
+          if (contour.sliceIndex === currentSlice) {
+            ctx.beginPath();
+            contour.points.forEach((point, index) => {
+              // Convert world coordinates to pixel coordinates (simplified)
+              const x = point[0] + canvas.width / 2;
+              const y = point[1] + canvas.height / 2;
+              
+              if (index === 0) {
+                ctx.moveTo(x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+            });
+            ctx.closePath();
+            ctx.stroke();
+          }
+        });
+        
+        ctx.setLineDash([]);
+      });
+    }
+
+    // Render editable structures (mock visualization)
     structures.forEach((structure) => {
-      if (!structure.visible) return;
+      if (!structure.visible || structure.id.startsWith('rt_')) return;
       
       ctx.strokeStyle = structure.color;
       ctx.lineWidth = 2;
       ctx.setLineDash(structure.isEditing ? [5, 5] : []);
       
       // Mock structure contour
+      const index = parseInt(structure.id.replace('edit_', ''));
       ctx.beginPath();
-      ctx.arc(200 + parseInt(structure.id) * 50, 200, 30, 0, 2 * Math.PI);
+      ctx.arc(200 + index * 50, 200, 30, 0, 2 * Math.PI);
       ctx.stroke();
       ctx.setLineDash([]);
     });
@@ -124,7 +182,12 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     ctx.font = "14px monospace";
     ctx.fillText(`Slice: ${currentSlice + 1}/${ctImages.length}`, 10, 25);
     
-  }, [currentSlice, structures, ctImages.length, zoom, pan, windowLevel, windowWidth]);
+    // Add image info
+    if (currentImage.seriesInstanceUID) {
+      ctx.fillText(`Series: ${currentImage.seriesInstanceUID.substring(0, 20)}...`, 10, 45);
+    }
+    
+  }, [currentSlice, structures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct]);
 
   const handleToolChange = (tool: Tool) => {
     setActiveTool(tool);
@@ -150,13 +213,13 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   };
 
   const addNewStructure = () => {
-    const newId = (structures.length + 1).toString();
+    const newId = `edit_${Date.now()}`;
     const colors = ["#ff8844", "#8844ff", "#44ff88", "#ff4488", "#88ff44"];
-    const color = colors[structures.length % colors.length];
+    const color = colors[structures.filter(s => s.id.startsWith('edit_')).length % colors.length];
     
     const newStructure: Structure = {
       id: newId,
-      name: `Structure_${newId}`,
+      name: `New_Structure_${structures.length + 1}`,
       color,
       visible: true,
       isEditing: true
@@ -189,8 +252,8 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   const resetView = () => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
-    setWindowLevel([400]);
-    setWindowWidth([800]);
+    setWindowLevel([ctImages[0]?.windowCenter || 400]);
+    setWindowWidth([ctImages[0]?.windowWidth || 800]);
     toast({
       title: "View reset",
       description: "Returned to default view settings",

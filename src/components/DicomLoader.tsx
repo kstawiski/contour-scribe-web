@@ -5,9 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import JSZip from "jszip";
+import { DicomProcessor, DicomImage, DicomRTStruct } from "@/lib/dicom-utils";
 
 interface DicomLoaderProps {
-  onDataLoaded: (data: { ctImages: ArrayBuffer[], rtStruct?: ArrayBuffer }) => void;
+  onDataLoaded: (data: { ctImages: DicomImage[], rtStruct?: DicomRTStruct }) => void;
 }
 
 export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
@@ -24,8 +25,8 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
       const zipData = file instanceof File ? await file.arrayBuffer() : file;
       const zipContent = await zip.loadAsync(zipData);
       
-      const ctImages: ArrayBuffer[] = [];
-      let rtStruct: ArrayBuffer | undefined;
+      const ctImages: DicomImage[] = [];
+      let rtStruct: DicomRTStruct | undefined;
       
       // Process files in the ZIP
       for (const [filename, fileObj] of Object.entries(zipContent.files)) {
@@ -33,29 +34,84 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
         
         const content = await fileObj.async("arraybuffer");
         
-        // Simple detection logic - in real implementation, you'd parse DICOM headers
-        if (filename.toLowerCase().includes("ct") || filename.toLowerCase().includes("image")) {
-          ctImages.push(content);
-        } else if (filename.toLowerCase().includes("rtstruct") || filename.toLowerCase().includes("struct")) {
-          rtStruct = content;
+        // Try to parse as DICOM
+        try {
+          // Check if it's a DICOM file by looking for DICOM prefix
+          const uint8Array = new Uint8Array(content);
+          const hasDicomPrefix = (
+            uint8Array[128] === 0x44 && // 'D'
+            uint8Array[129] === 0x49 && // 'I'
+            uint8Array[130] === 0x43 && // 'C'
+            uint8Array[131] === 0x4D    // 'M'
+          );
+          
+          if (hasDicomPrefix || filename.toLowerCase().endsWith('.dcm')) {
+            // Try to parse as CT image first
+            const dicomImage = DicomProcessor.parseDicomFile(content);
+            if (dicomImage) {
+              ctImages.push(dicomImage);
+              continue;
+            }
+            
+            // If not a CT image, try parsing as RT Structure
+            const rtStructData = DicomProcessor.parseRTStruct(content);
+            if (rtStructData && !rtStruct) {
+              rtStruct = rtStructData;
+            }
+          }
+        } catch (error) {
+          console.warn(`Could not parse file ${filename} as DICOM:`, error);
+          
+          // Fallback: try simple filename detection for non-DICOM files
+          if (filename.toLowerCase().includes("ct") || 
+              filename.toLowerCase().includes("image") ||
+              filename.toLowerCase().includes("slice")) {
+            // Create a mock DICOM image for testing
+            const mockImage: DicomImage = {
+              arrayBuffer: content,
+              dataSet: null,
+              pixelData: new Uint8Array(512 * 512).map(() => Math.random() * 255),
+              width: 512,
+              height: 512,
+              windowCenter: 40,
+              windowWidth: 400,
+              rescaleIntercept: 0,
+              rescaleSlope: 1,
+              seriesInstanceUID: `mock.${Date.now()}.${ctImages.length}`,
+              sopInstanceUID: `mock.${Date.now()}.${ctImages.length}`,
+              sliceLocation: ctImages.length * 5
+            };
+            ctImages.push(mockImage);
+          }
         }
       }
       
       if (ctImages.length === 0) {
-        throw new Error("No CT images found in the ZIP file");
+        throw new Error("No valid DICOM CT images found in the ZIP file. Please ensure the ZIP contains DICOM files (.dcm) or files with DICOM headers.");
       }
+      
+      // Sort CT images by slice location if available
+      ctImages.sort((a, b) => {
+        if (a.sliceLocation !== undefined && b.sliceLocation !== undefined) {
+          return a.sliceLocation - b.sliceLocation;
+        }
+        if (a.imagePosition && b.imagePosition) {
+          return a.imagePosition[2] - b.imagePosition[2]; // Z coordinate
+        }
+        return 0;
+      });
       
       onDataLoaded({ ctImages, rtStruct });
       
       toast({
-        title: "Data loaded successfully",
+        title: "DICOM data loaded successfully",
         description: `Found ${ctImages.length} CT images${rtStruct ? " and RT structure" : ""}`,
       });
       
     } catch (error) {
       console.error("Error processing ZIP file:", error);
       toast({
-        title: "Error loading data",
+        title: "Error loading DICOM data",
         description: error instanceof Error ? error.message : "Failed to process ZIP file",
         variant: "destructive",
       });

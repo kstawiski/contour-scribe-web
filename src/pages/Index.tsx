@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { DicomLoader } from "@/components/DicomLoader";
 import { DicomViewer } from "@/components/DicomViewer";
+import { DicomImage, DicomRTStruct } from "@/lib/dicom-utils";
 
 interface DicomData {
-  ctImages: ArrayBuffer[];
-  rtStruct?: ArrayBuffer;
+  ctImages: DicomImage[];
+  rtStruct?: DicomRTStruct;
 }
 
 const Index = () => {
