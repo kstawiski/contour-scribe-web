@@ -144,7 +144,7 @@ export class DicomProcessor {
             const contourSeq = contourItem.elements?.x30060040;
             if (contourSeq) {
               const contours = this.parseSequence(contourItem, contourSeq);
-              contours.forEach((contour: any) => {
+              contours.forEach((contour: any, contourIndex: number) => {
                 const contourData = contour.string('x30060050');
                 if (contourData) {
                   const points = contourData.split('\\').map(Number);
@@ -152,9 +152,14 @@ export class DicomProcessor {
                   for (let i = 0; i < points.length; i += 3) {
                     pointPairs.push([points[i], points[i + 1], points[i + 2]]);
                   }
+                  
+                  // Calculate which slice this contour belongs to based on Z coordinate
+                  const zPosition = pointPairs.length > 0 ? pointPairs[0][2] : 0;
+                  const sliceIndex = Math.round(zPosition / 5); // Rough slice calculation
+                  
                   structure.contours.push({
                     points: pointPairs,
-                    sliceIndex: 0 // Would need to calculate this based on image position
+                    sliceIndex: Math.max(0, sliceIndex) // Ensure positive slice index
                   });
                 }
               });
