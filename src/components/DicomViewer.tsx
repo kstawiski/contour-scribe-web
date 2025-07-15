@@ -171,34 +171,20 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.stroke();
     }
 
-    // Correct DICOM coordinate transformation
+    // Simplified coordinate transformation - no offset issues
     const worldToCanvas = (worldX: number, worldY: number, worldZ?: number) => {
-      // DICOM RT structures are in patient coordinate system (mm)
-      // Image Position Patient defines the origin of the image plane
       const imagePosition = currentImage.imagePosition || [0, 0, 0];
+      const pixelSpacing = currentImage.pixelSpacing || [1, 1];
       
-      // Get pixel spacing from DICOM header
-      let pixelSpacing = currentImage.pixelSpacing || [1, 1];
+      // Convert world coordinates to image pixel coordinates
+      const pixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
+      const pixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
       
-      // Transform from patient coordinates to image pixel coordinates
-      // For axial images, X maps to columns, Y maps to rows
-      const relativeX = worldX - imagePosition[0];
-      const relativeY = worldY - imagePosition[1];
+      // Convert pixel coordinates to canvas coordinates with proper scaling
+      const canvasX = imageX + (pixelX * imageBounds.scaleX);
+      const canvasY = imageY + (pixelY * imageBounds.scaleY);
       
-      // Convert to pixel coordinates
-      const pixelX = relativeX / pixelSpacing[0];
-      const pixelY = relativeY / pixelSpacing[1];
-      
-      // Transform to canvas coordinates
-      // DICOM uses right-handed coordinate system, canvas uses left-handed
-      // No Y flip needed - keep natural DICOM orientation
-      const canvasX = imageX + (pixelX / currentImage.width) * drawWidth;
-      const canvasY = imageY + (pixelY / currentImage.height) * drawHeight;
-      
-      return {
-        x: canvasX,
-        y: canvasY
-      };
+      return { x: canvasX, y: canvasY };
     };
 
     // Render RT structure contours with debugging
@@ -463,26 +449,26 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     if (activeTool === "brush") {
       console.log('🖌️ Brush tool activated');
       
-      // Force create a new structure for testing
-      const newStructure: Structure = {
-        id: `test_${Date.now()}`,
-        name: `Test_${Date.now()}`,
-        color: "#ff0000", // Bright red for visibility
-        visible: true,
-        isEditing: true
-      };
+      // Find existing editing structure or create one
+      let editingStructure = structures.find(s => s.isEditing);
       
-      console.log('🏗️ Creating new structure:', newStructure);
-      
-      setStructures(prev => {
-        const updated = [...prev.map(s => ({ ...s, isEditing: false })), newStructure];
-        console.log('📝 Updated structures:', updated);
-        return updated;
-      });
+      if (!editingStructure) {
+        const newStructure: Structure = {
+          id: `user_structure_${Date.now()}`,
+          name: `New Structure`,
+          color: "#ff0000",
+          visible: true,
+          isEditing: true
+        };
+        
+        console.log('🏗️ Creating new structure:', newStructure);
+        setStructures(prev => [...prev.map(s => ({ ...s, isEditing: false })), newStructure]);
+        editingStructure = newStructure;
+      }
       
       setIsDrawing(true);
       setCurrentPath([pos]);
-      console.log('✅ Started drawing at:', pos);
+      console.log('✅ Started drawing for structure:', editingStructure.name);
       
     } else if (activeTool === "eraser") {
       console.log('🧽 Eraser tool activated');
