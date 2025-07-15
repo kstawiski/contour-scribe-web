@@ -160,20 +160,21 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.stroke();
     }
 
-    // Fixed coordinate transformation for DICOM structures
+    // Proper DICOM coordinate transformation
     const worldToCanvas = (worldX: number, worldY: number, worldZ?: number) => {
-      // Convert DICOM world coordinates to canvas coordinates
-      // Assume image coordinates are in pixel space relative to image center
+      // DICOM RT structures store coordinates in patient coordinate system (mm)
+      // We need to transform them to image pixel coordinates
       
-      // Calculate position relative to image center
-      const centerX = currentImage.width / 2;
-      const centerY = currentImage.height / 2;
+      // Get image position and pixel spacing from DICOM tags
+      const imagePosition = currentImage.imagePosition || [0, 0, 0];
+      const pixelSpacing = [1, 1]; // Default - should be from DICOM tag (0028,0030)
       
-      // Convert world coordinates to image pixel coordinates
-      const imagePixelX = centerX + worldX;
-      const imagePixelY = centerY + worldY; // No Y flip needed here
+      // Transform world coordinates to image pixel coordinates
+      // This assumes a standard DICOM coordinate system
+      const imagePixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
+      const imagePixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
       
-      // Transform to canvas coordinates using the image bounds
+      // Convert image pixel coordinates to canvas coordinates
       const canvasX = imageX + (imagePixelX / currentImage.width) * drawWidth;
       const canvasY = imageY + (imagePixelY / currentImage.height) * drawHeight;
       
@@ -183,7 +184,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       };
     };
 
-    // Render RT structure contours if available - more precise slice matching
+    // Render RT structure contours with proper slice matching
     if (rtStruct?.structures) {
       rtStruct.structures.forEach((rtStructure, structIndex) => {
         const structure = structures.find(s => s.id === `rt_${structIndex}`);
@@ -193,35 +194,48 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         ctx.lineWidth = 2;
         ctx.setLineDash(structure.isEditing ? [5, 5] : []);
         
-        // Only show contours that exactly match the current slice or are very close
+        // Get current slice Z position
+        const currentSliceZ = currentImage.sliceLocation;
+        
         rtStructure.contours.forEach(contour => {
-          const currentSliceLocation = currentImage.sliceLocation || currentSlice * 5;
+          if (contour.points.length === 0) return;
           
-          // Much more precise slice matching - only show if exactly on this slice
+          // Check if this contour belongs to the current slice
+          const contourZ = contour.points[0][2]; // Z coordinate from first point
           let shouldShowContour = false;
           
-          if (contour.sliceIndex === currentSlice) {
-            shouldShowContour = true;
-          } else if (contour.points.length > 0) {
-            // Check Z coordinate of contour points
-            const contourZ = contour.points[0][2];
-            const sliceTolerance = 1.0; // mm tolerance
-            shouldShowContour = Math.abs(contourZ - currentSliceLocation) < sliceTolerance;
+          if (currentSliceZ !== undefined) {
+            // Match by actual slice location with tolerance
+            const tolerance = 2.5; // mm tolerance for slice matching
+            shouldShowContour = Math.abs(contourZ - currentSliceZ) <= tolerance;
+          } else {
+            // Fallback: match by slice index
+            shouldShowContour = contour.sliceIndex === currentSlice;
           }
           
-          if (shouldShowContour && contour.points.length > 0) {
+          if (shouldShowContour) {
             ctx.beginPath();
+            let validPoints = 0;
+            
             contour.points.forEach((point, index) => {
               const canvasPoint = worldToCanvas(point[0], point[1], point[2]);
               
-              if (index === 0) {
-                ctx.moveTo(canvasPoint.x, canvasPoint.y);
-              } else {
-                ctx.lineTo(canvasPoint.x, canvasPoint.y);
+              // Only draw if the point is within reasonable bounds
+              if (canvasPoint.x >= imageX - 50 && canvasPoint.x <= imageX + drawWidth + 50 &&
+                  canvasPoint.y >= imageY - 50 && canvasPoint.y <= imageY + drawHeight + 50) {
+                if (validPoints === 0) {
+                  ctx.moveTo(canvasPoint.x, canvasPoint.y);
+                } else {
+                  ctx.lineTo(canvasPoint.x, canvasPoint.y);
+                }
+                validPoints++;
               }
             });
-            ctx.closePath();
-            ctx.stroke();
+            
+            if (validPoints > 2) {
+              ctx.closePath();
+              ctx.stroke();
+            }
           }
         });
         

@@ -153,13 +153,12 @@ export class DicomProcessor {
                     pointPairs.push([points[i], points[i + 1], points[i + 2]]);
                   }
                   
-                  // Calculate which slice this contour belongs to based on Z coordinate
-                  const zPosition = pointPairs.length > 0 ? pointPairs[0][2] : 0;
-                  const sliceIndex = Math.round(zPosition / 5); // Rough slice calculation
+                  // Don't try to calculate slice index here - use actual Z coordinate
+                  // The viewer will match contours to slices based on Z position
                   
                   structure.contours.push({
                     points: pointPairs,
-                    sliceIndex: Math.max(0, sliceIndex) // Ensure positive slice index
+                    sliceIndex: 0 // Will be matched by Z coordinate in viewer
                   });
                 }
               });
