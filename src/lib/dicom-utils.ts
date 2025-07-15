@@ -14,6 +14,8 @@ export interface DicomImage {
   sopInstanceUID: string;
   imagePosition?: number[];
   sliceLocation?: number;
+  sliceThickness?: number;
+  pixelSpacing?: number[];
 }
 
 export interface DicomStructure {
@@ -56,9 +58,11 @@ export class DicomProcessor {
       const seriesInstanceUID = dataSet.string('x0020000e') || '';
       const sopInstanceUID = dataSet.string('x00080018') || '';
 
-      // Image position and slice location
+      // Image position, slice location, and spacing information
       const imagePosition = dataSet.string('x00200032')?.split('\\').map(Number);
       const sliceLocation = dataSet.floatString('x00201041');
+      const sliceThickness = dataSet.floatString('x00180050');
+      const pixelSpacing = dataSet.string('x00280030')?.split('\\').map(Number);
 
       // Extract pixel data
       const pixelDataElement = dataSet.elements.x7fe00010;
@@ -94,6 +98,8 @@ export class DicomProcessor {
         sopInstanceUID,
         imagePosition,
         sliceLocation,
+        sliceThickness,
+        pixelSpacing,
       };
     } catch (error) {
       console.error('Error parsing DICOM file:', error);

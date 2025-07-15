@@ -166,42 +166,23 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       // Image Position Patient defines the origin of the image plane
       const imagePosition = currentImage.imagePosition || [0, 0, 0];
       
-      // Get pixel spacing from DICOM header - assume 1mm if not available
-      const dataSet = currentImage.dataSet;
-      let pixelSpacing = [1, 1];
-      try {
-        const spacingStr = dataSet?.string('x00280030');
-        if (spacingStr) {
-          pixelSpacing = spacingStr.split('\\').map(Number);
-        }
-      } catch (e) {
-        // Use default 1mm spacing
-      }
-      
-      // Get image orientation (should be identity for axial images)
-      let imageOrientation = [1, 0, 0, 0, 1, 0]; // Default axial orientation
-      try {
-        const orientationStr = dataSet?.string('x00200037');
-        if (orientationStr) {
-          imageOrientation = orientationStr.split('\\').map(Number);
-        }
-      } catch (e) {
-        // Use default orientation
-      }
+      // Get pixel spacing from DICOM header
+      let pixelSpacing = currentImage.pixelSpacing || [1, 1];
       
       // Transform from patient coordinates to image pixel coordinates
       // For axial images, X maps to columns, Y maps to rows
       const relativeX = worldX - imagePosition[0];
       const relativeY = worldY - imagePosition[1];
       
-      // For standard axial orientation, pixel coordinates are:
+      // Convert to pixel coordinates
       const pixelX = relativeX / pixelSpacing[0];
       const pixelY = relativeY / pixelSpacing[1];
       
       // Transform to canvas coordinates
-      // Note: DICOM Y axis is typically flipped compared to canvas
+      // DICOM uses right-handed coordinate system, canvas uses left-handed
+      // No Y flip needed - keep natural DICOM orientation
       const canvasX = imageX + (pixelX / currentImage.width) * drawWidth;
-      const canvasY = imageY + ((currentImage.height - pixelY) / currentImage.height) * drawHeight;
+      const canvasY = imageY + (pixelY / currentImage.height) * drawHeight;
       
       return {
         x: canvasX,
@@ -232,8 +213,8 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           let shouldShowContour = false;
           
           if (currentSliceZ !== undefined) {
-            // Much tighter tolerance to avoid duplicate contours
-            const tolerance = 0.75; // Reduced from 2.5mm to 0.75mm
+            // Use slice thickness for tolerance, or default to 1mm
+            const tolerance = (currentImage.sliceThickness || 1.0) / 2;
             shouldShowContour = Math.abs(contourZ - currentSliceZ) <= tolerance;
           } else {
             // Fallback: match by slice index
@@ -323,20 +304,20 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     if (currentImage.sliceLocation !== undefined) {
       ctx.fillText(`Z: ${currentImage.sliceLocation.toFixed(1)}mm`, 15, 70);
     }
-    
-    if (currentImage.imagePosition) {
-      ctx.fillText(`Pos: [${currentImage.imagePosition.map(p => p.toFixed(1)).join(',')}]`, 15, 85);
+    if (currentImage.sliceThickness !== undefined) {
+      ctx.fillText(`Thick: ${currentImage.sliceThickness.toFixed(1)}mm`, 15, 85);
     }
     
     // Show number of visible contours on this slice
     let contoursOnSlice = 0;
     if (rtStruct?.structures) {
+      const tolerance = (currentImage.sliceThickness || 1.0) / 2;
       rtStruct.structures.forEach(structure => {
         structure.contours.forEach(contour => {
           if (contour.points.length > 0) {
             const contourZ = contour.points[0][2];
             const currentSliceZ = currentImage.sliceLocation;
-            if (currentSliceZ !== undefined && Math.abs(contourZ - currentSliceZ) <= 0.75) {
+            if (currentSliceZ !== undefined && Math.abs(contourZ - currentSliceZ) <= tolerance) {
               contoursOnSlice++;
             }
           }
@@ -344,7 +325,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       });
     }
     ctx.fillText(`Contours: ${contoursOnSlice}`, 15, 100);
-    
     // Add center crosshair for reference - image center
     ctx.strokeStyle = "#00ff00";
     ctx.lineWidth = 1;
@@ -356,11 +336,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     ctx.lineTo(imageX + drawWidth/2, imageY + drawHeight/2 + 10);
     ctx.stroke();
     ctx.setLineDash([]);
-    
-    // Add corner markers to show image bounds
-    ctx.strokeStyle = "#ff0000";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(imageX, imageY, drawWidth, drawHeight);
     
   }, [currentSlice, structures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct]);
 
