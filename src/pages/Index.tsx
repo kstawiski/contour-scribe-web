@@ -1,14 +1,33 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useState } from "react";
+import { DicomLoader } from "@/components/DicomLoader";
+import { DicomViewer } from "@/components/DicomViewer";
+
+interface DicomData {
+  ctImages: ArrayBuffer[];
+  rtStruct?: ArrayBuffer;
+}
 
 const Index = () => {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
-    </div>
-  );
+  const [dicomData, setDicomData] = useState<DicomData | null>(null);
+
+  const handleDataLoaded = (data: DicomData) => {
+    setDicomData(data);
+  };
+
+  const handleBackToLoader = () => {
+    setDicomData(null);
+  };
+
+  if (dicomData) {
+    return (
+      <DicomViewer 
+        ctImages={dicomData.ctImages} 
+        rtStruct={dicomData.rtStruct}
+      />
+    );
+  }
+
+  return <DicomLoader onDataLoaded={handleDataLoaded} />;
 };
 
 export default Index;
