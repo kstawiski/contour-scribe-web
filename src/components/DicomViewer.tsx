@@ -344,8 +344,8 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     }
 
     // Enhanced debug overlay with coordinate info
-    ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.fillRect(10, 10, 220, 130);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
+    ctx.fillRect(10, 10, 220, 210); // Larger debug area
     
     ctx.fillStyle = "#ffffff";
     ctx.font = "11px monospace";
@@ -377,11 +377,18 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       });
     }
     
-    // Show drawing stats
+    // COMPREHENSIVE DEBUG INFO
     const contoursOnCurrentSlice = drawnContours.filter(c => c.sliceIndex === currentSlice).length;
     ctx.fillText(`Drawn: ${contoursOnCurrentSlice}`, 15, 115);
-    if (isDrawing) {
-      ctx.fillText(`Drawing: ${currentPath.length} pts`, 15, 130);
+    ctx.fillText(`Total drawn: ${drawnContours.length}`, 15, 130);
+    ctx.fillText(`Tool: ${activeTool}`, 15, 145);
+    ctx.fillText(`Drawing: ${isDrawing ? 'YES' : 'NO'}`, 15, 160);
+    ctx.fillText(`Path pts: ${currentPath.length}`, 15, 175);
+    ctx.fillText(`Structures: ${structures.length}`, 15, 190);
+    
+    const editingStructure = structures.find(s => s.isEditing);
+    if (editingStructure) {
+      ctx.fillText(`Editing: ${editingStructure.name}`, 15, 205);
     }
     // Add center crosshair for reference - image center
     ctx.strokeStyle = "#00ff00";
@@ -426,167 +433,140 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     };
   }, [activeTool, ctImages.length]);
 
-  // Simplified mouse events for drawing
-  useEffect(() => {
+  // COMPLETELY NEW APPROACH: React event handlers instead of addEventListener
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    console.log('🟢 REACT onMouseDown triggered!');
+    console.log('Event details:', {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      button: e.button,
+      target: e.currentTarget,
+      activeTool,
+      isDrawing
+    });
+    
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      console.log('❌ No canvas ref');
+      return;
+    }
+    
+    const rect = canvas.getBoundingClientRect();
+    const pos = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    };
+    
+    console.log('📍 Canvas position:', pos);
+    console.log('📐 Canvas rect:', rect);
+    
+    if (activeTool === "brush") {
+      console.log('🖌️ Brush tool activated');
+      
+      // Force create a new structure for testing
+      const newStructure: Structure = {
+        id: `test_${Date.now()}`,
+        name: `Test_${Date.now()}`,
+        color: "#ff0000", // Bright red for visibility
+        visible: true,
+        isEditing: true
+      };
+      
+      console.log('🏗️ Creating new structure:', newStructure);
+      
+      setStructures(prev => {
+        const updated = [...prev.map(s => ({ ...s, isEditing: false })), newStructure];
+        console.log('📝 Updated structures:', updated);
+        return updated;
+      });
+      
+      setIsDrawing(true);
+      setCurrentPath([pos]);
+      console.log('✅ Started drawing at:', pos);
+      
+    } else if (activeTool === "eraser") {
+      console.log('🧽 Eraser tool activated');
+      const beforeCount = drawnContours.length;
+      
+      setDrawnContours(prev => {
+        const filtered = prev.filter(contour => {
+          if (contour.sliceIndex !== currentSlice) return true;
+          
+          return !contour.points.some(point => {
+            const dx = point.x - pos.x;
+            const dy = point.y - pos.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            return distance <= 50; // Large erase radius for testing
+          });
+        });
+        
+        console.log(`🗑️ Erased ${beforeCount - filtered.length} contours`);
+        return filtered;
+      });
+    }
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDrawing) return;
+    
     const canvas = canvasRef.current;
     if (!canvas) return;
-
-    let isMouseDown = false;
-    let lastMousePos = { x: 0, y: 0 };
-
-    const getMousePos = (e: MouseEvent | PointerEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      console.log('Raw mouse coords:', e.clientX, e.clientY, 'Canvas rect:', rect.left, rect.top, 'Final:', x, y);
-      return { x, y };
+    
+    const rect = canvas.getBoundingClientRect();
+    const pos = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
     };
+    
+    console.log('🖱️ Mouse move while drawing:', pos);
+    
+    setCurrentPath(prev => {
+      const newPath = [...prev, pos];
+      console.log('📏 Path length:', newPath.length);
+      return newPath;
+    });
+  };
 
-    const handleMouseDown = (e: MouseEvent | PointerEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      isMouseDown = true;
-      const pos = getMousePos(e);
-      lastMousePos = pos;
+  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    console.log('🔴 REACT onMouseUp triggered');
+    
+    if (isDrawing && currentPath.length > 2) {
+      const editingStructure = structures.find(s => s.isEditing);
+      console.log('💾 Saving contour:', {
+        structureId: editingStructure?.id,
+        pathLength: currentPath.length,
+        sliceIndex: currentSlice
+      });
       
-      console.log('=== MOUSE DOWN EVENT ===');
-      console.log('Position:', pos);
-      console.log('Active tool:', activeTool);
-      console.log('Event type:', e.type);
-      console.log('Target:', e.target);
-
-      if (activeTool === "brush") {
-        // Start drawing - auto-create structure if needed
-        let editingStructure = structures.find(s => s.isEditing);
-        if (!editingStructure) {
-          const newStructure: Structure = {
-            id: `draw_${Date.now()}`,
-            name: `New_${Date.now()}`,
-            color: "#ff4444",
-            visible: true,
-            isEditing: true
-          };
-          setStructures(prev => [...prev, newStructure]);
-          editingStructure = newStructure;
-        }
+      if (editingStructure) {
+        const newContour: DrawnContour = {
+          points: currentPath.map(p => ({ x: p.x, y: p.y })),
+          sliceIndex: currentSlice,
+          structureId: editingStructure.id
+        };
         
-        setIsDrawing(true);
-        setCurrentPath([pos]);
-        console.log('Started drawing');
-      } else if (activeTool === "eraser") {
-        // Erase contours near click
-        const eraseRadius = 30;
         setDrawnContours(prev => {
-          const filtered = prev.filter(contour => {
-            if (contour.sliceIndex !== currentSlice) return true;
-            
-            return !contour.points.some(point => {
-              const dx = point.x - pos.x;
-              const dy = point.y - pos.y;
-              return Math.sqrt(dx * dx + dy * dy) <= eraseRadius;
-            });
-          });
-          console.log('Erased contours, remaining:', filtered.length);
-          return filtered;
+          const updated = [...prev, newContour];
+          console.log('💿 Saved! Total contours:', updated.length);
+          return updated;
+        });
+        
+        toast({
+          title: "Drawing saved!",
+          description: `${currentPath.length} points on slice ${currentSlice + 1}`,
         });
       }
-    };
-
-    const handleMouseMove = (e: MouseEvent | PointerEvent) => {
-      if (!isMouseDown) return;
-      
-      const pos = getMousePos(e);
-      const deltaX = pos.x - lastMousePos.x;
-      const deltaY = pos.y - lastMousePos.y;
-
-      console.log('Mouse move:', pos, 'Tool:', activeTool, 'Drawing:', isDrawing);
-
-      if (activeTool === "pan") {
-        setPan(prev => ({
-          x: prev.x + deltaX,
-          y: prev.y + deltaY
-        }));
-      } else if (activeTool === "windowing") {
-        setWindowWidth(prev => [Math.max(1, prev[0] + deltaX * 4)]);
-        setWindowLevel(prev => [prev[0] - deltaY * 2]);
-      } else if (activeTool === "brush" && isDrawing) {
-        // Add to drawing path
-        const lastPoint = currentPath[currentPath.length - 1];
-        if (!lastPoint || Math.sqrt((pos.x - lastPoint.x) ** 2 + (pos.y - lastPoint.y) ** 2) > 2) {
-          setCurrentPath(prev => [...prev, pos]);
-          console.log('Added point, total:', currentPath.length + 1);
-        }
-      } else if (activeTool === "eraser") {
-        // Continue erasing while dragging
-        const eraseRadius = 30;
-        setDrawnContours(prev => {
-          return prev.filter(contour => {
-            if (contour.sliceIndex !== currentSlice) return true;
-            
-            return !contour.points.some(point => {
-              const dx = point.x - pos.x;
-              const dy = point.y - pos.y;
-              return Math.sqrt(dx * dx + dy * dy) <= eraseRadius;
-            });
-          });
-        });
-      }
-
-      lastMousePos = pos;
-    };
-
-    const handleMouseUp = () => {
-      if (activeTool === "brush" && isDrawing && currentPath.length > 3) {
-        const editingStructure = structures.find(s => s.isEditing);
-        if (editingStructure) {
-          const newContour: DrawnContour = {
-            points: currentPath.map(p => ({ x: p.x, y: p.y })),
-            sliceIndex: currentSlice,
-            structureId: editingStructure.id
-          };
-          
-          setDrawnContours(prev => {
-            const updated = [...prev, newContour];
-            console.log('Saved contour with', newContour.points.length, 'points. Total contours:', updated.length);
-            return updated;
-          });
-          
-          toast({
-            title: "Contour drawn",
-            description: `Saved ${newContour.points.length} points`,
-          });
-        }
-      }
-      
-      setIsDrawing(false);
-      setCurrentPath([]);
-      isMouseDown = false;
-      console.log('Mouse up - finished drawing');
-    };
-
-    console.log('Adding event listeners to canvas...');
+    }
     
-    // Add event listeners
-    canvas.addEventListener('mousedown', handleMouseDown);
-    canvas.addEventListener('mousemove', handleMouseMove);
-    canvas.addEventListener('mouseup', handleMouseUp);
-    canvas.addEventListener('mouseleave', handleMouseUp);
-    
-    // Also handle pointer events for touch devices
-    canvas.addEventListener('pointerdown', handleMouseDown as any);
-    canvas.addEventListener('pointermove', handleMouseMove as any);
-    canvas.addEventListener('pointerup', handleMouseUp);
+    setIsDrawing(false);
+    setCurrentPath([]);
+    console.log('🏁 Drawing finished');
+  };
 
-    return () => {
-      canvas.removeEventListener('mousedown', handleMouseDown);
-      canvas.removeEventListener('mousemove', handleMouseMove);
-      canvas.removeEventListener('mouseup', handleMouseUp);
-      canvas.removeEventListener('mouseleave', handleMouseUp);
-      canvas.removeEventListener('pointerdown', handleMouseDown as any);
-      canvas.removeEventListener('pointermove', handleMouseMove as any);
-      canvas.removeEventListener('pointerup', handleMouseUp);
-    };
-  }, [activeTool, currentSlice, structures, currentPath, isDrawing, drawnContours, toast]);
+  // Add click test handler
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    console.log('🎯 BASIC CLICK TEST WORKS!', e.clientX, e.clientY);
+  };
 
   const handleToolChange = (tool: Tool) => {
     setActiveTool(tool);
@@ -762,20 +742,22 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
             <div className="relative w-full h-full flex items-center justify-center">
               <canvas
                 ref={canvasRef}
-                className="border border-border shadow-elevation cursor-crosshair"
+                className="border-4 border-red-500 shadow-elevation cursor-crosshair"
                 style={{
                   imageRendering: "pixelated",
                   width: "min(calc(100vh - 200px), calc(100vw - 700px))",
                   height: "min(calc(100vh - 200px), calc(100vw - 700px))",
-                  touchAction: "none", // Prevent default touch behaviors
-                  userSelect: "none", // Prevent text selection
-                  pointerEvents: "auto" // Ensure pointer events work
+                  touchAction: "none",
+                  userSelect: "none",
+                  backgroundColor: "rgba(255,0,0,0.1)" // Red tint to see canvas bounds
                 }}
-                onMouseDown={(e) => {
-                  console.log('Direct onMouseDown triggered!', e.clientX, e.clientY);
-                }}
+                onClick={handleCanvasClick}
+                onMouseDown={handleCanvasMouseDown}
+                onMouseMove={handleCanvasMouseMove}
+                onMouseUp={handleCanvasMouseUp}
                 onPointerDown={(e) => {
-                  console.log('Direct onPointerDown triggered!', e.clientX, e.clientY);
+                  console.log('🔵 POINTER DOWN:', e.clientX, e.clientY);
+                  handleCanvasMouseDown(e as any);
                 }}
               />
               
