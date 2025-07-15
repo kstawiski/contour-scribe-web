@@ -160,33 +160,48 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.stroke();
     }
 
-    // Proper DICOM coordinate transformation with debugging
+    // Correct DICOM coordinate transformation
     const worldToCanvas = (worldX: number, worldY: number, worldZ?: number) => {
-      // DICOM RT structures store coordinates in patient coordinate system (mm)
-      // We need to transform them to image pixel coordinates
-      
-      // Get image position and pixel spacing from DICOM tags
+      // DICOM RT structures are in patient coordinate system (mm)
+      // Image Position Patient defines the origin of the image plane
       const imagePosition = currentImage.imagePosition || [0, 0, 0];
-      const pixelSpacing = [1, 1]; // Default - should be from DICOM tag (0028,0030)
       
-      // Debug logging for first few points
-      if (Math.random() < 0.01) { // Log ~1% of points to avoid spam
-        console.log('Coordinate transform debug:', {
-          worldCoords: [worldX, worldY, worldZ],
-          imagePosition,
-          pixelSpacing,
-          imageSize: [currentImage.width, currentImage.height],
-          imageBounds: { imageX, imageY, drawWidth, drawHeight }
-        });
+      // Get pixel spacing from DICOM header - assume 1mm if not available
+      const dataSet = currentImage.dataSet;
+      let pixelSpacing = [1, 1];
+      try {
+        const spacingStr = dataSet?.string('x00280030');
+        if (spacingStr) {
+          pixelSpacing = spacingStr.split('\\').map(Number);
+        }
+      } catch (e) {
+        // Use default 1mm spacing
       }
       
-      // Transform world coordinates to image pixel coordinates
-      const imagePixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
-      const imagePixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
+      // Get image orientation (should be identity for axial images)
+      let imageOrientation = [1, 0, 0, 0, 1, 0]; // Default axial orientation
+      try {
+        const orientationStr = dataSet?.string('x00200037');
+        if (orientationStr) {
+          imageOrientation = orientationStr.split('\\').map(Number);
+        }
+      } catch (e) {
+        // Use default orientation
+      }
       
-      // Convert image pixel coordinates to canvas coordinates
-      const canvasX = imageX + (imagePixelX / currentImage.width) * drawWidth;
-      const canvasY = imageY + (imagePixelY / currentImage.height) * drawHeight;
+      // Transform from patient coordinates to image pixel coordinates
+      // For axial images, X maps to columns, Y maps to rows
+      const relativeX = worldX - imagePosition[0];
+      const relativeY = worldY - imagePosition[1];
+      
+      // For standard axial orientation, pixel coordinates are:
+      const pixelX = relativeX / pixelSpacing[0];
+      const pixelY = relativeY / pixelSpacing[1];
+      
+      // Transform to canvas coordinates
+      // Note: DICOM Y axis is typically flipped compared to canvas
+      const canvasX = imageX + (pixelX / currentImage.width) * drawWidth;
+      const canvasY = imageY + ((currentImage.height - pixelY) / currentImage.height) * drawHeight;
       
       return {
         x: canvasX,
@@ -217,8 +232,8 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           let shouldShowContour = false;
           
           if (currentSliceZ !== undefined) {
-            // Match by actual slice location with tolerance
-            const tolerance = 2.5; // mm tolerance for slice matching
+            // Much tighter tolerance to avoid duplicate contours
+            const tolerance = 0.75; // Reduced from 2.5mm to 0.75mm
             shouldShowContour = Math.abs(contourZ - currentSliceZ) <= tolerance;
           } else {
             // Fallback: match by slice index
@@ -321,7 +336,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           if (contour.points.length > 0) {
             const contourZ = contour.points[0][2];
             const currentSliceZ = currentImage.sliceLocation;
-            if (currentSliceZ !== undefined && Math.abs(contourZ - currentSliceZ) <= 2.5) {
+            if (currentSliceZ !== undefined && Math.abs(contourZ - currentSliceZ) <= 0.75) {
               contoursOnSlice++;
             }
           }
@@ -330,7 +345,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     }
     ctx.fillText(`Contours: ${contoursOnSlice}`, 15, 100);
     
-    // Add center crosshair for reference
+    // Add center crosshair for reference - image center
     ctx.strokeStyle = "#00ff00";
     ctx.lineWidth = 1;
     ctx.setLineDash([2, 2]);
@@ -341,6 +356,11 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     ctx.lineTo(imageX + drawWidth/2, imageY + drawHeight/2 + 10);
     ctx.stroke();
     ctx.setLineDash([]);
+    
+    // Add corner markers to show image bounds
+    ctx.strokeStyle = "#ff0000";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(imageX, imageY, drawWidth, drawHeight);
     
   }, [currentSlice, structures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct]);
 
