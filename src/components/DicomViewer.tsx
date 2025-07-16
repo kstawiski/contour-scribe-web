@@ -288,7 +288,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.setLineDash([]);
     });
 
-    // Render user-drawn contours
+    // Render user-drawn contours - convert world coordinates back to canvas
     drawnContours
       .filter(contour => contour.sliceIndex === currentSlice)
       .forEach((contour, index) => {
@@ -301,9 +301,14 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         
         if (contour.points.length > 1) {
           ctx.beginPath();
-          ctx.moveTo(contour.points[0].x, contour.points[0].y);
+          // Convert first world coordinate point back to canvas coordinates
+          const firstCanvasPoint = worldToCanvas(contour.points[0].x, contour.points[0].y);
+          ctx.moveTo(firstCanvasPoint.x, firstCanvasPoint.y);
+          
           contour.points.slice(1).forEach(point => {
-            ctx.lineTo(point.x, point.y);
+            // Convert each world coordinate point back to canvas coordinates
+            const canvasPoint = worldToCanvas(point.x, point.y);
+            ctx.lineTo(canvasPoint.x, canvasPoint.y);
           });
           ctx.stroke();
         }
@@ -311,7 +316,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         ctx.setLineDash([]);
       });
     
-    // Render current drawing path (live preview)
+    // Render current drawing path (live preview) - convert world coordinates
     if (currentPath.length > 1) {
       const editingStructure = structures.find(s => s.isEditing);
       if (editingStructure) {
@@ -320,9 +325,14 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         ctx.setLineDash([2, 2]);
         
         ctx.beginPath();
-        ctx.moveTo(currentPath[0].x, currentPath[0].y);
+        // Convert first world coordinate point back to canvas coordinates
+        const firstCanvasPoint = worldToCanvas(currentPath[0].x, currentPath[0].y);
+        ctx.moveTo(firstCanvasPoint.x, firstCanvasPoint.y);
+        
         currentPath.slice(1).forEach(point => {
-          ctx.lineTo(point.x, point.y);
+          // Convert each world coordinate point back to canvas coordinates
+          const canvasPoint = worldToCanvas(point.x, point.y);
+          ctx.lineTo(canvasPoint.x, canvasPoint.y);
         });
         ctx.stroke();
         ctx.setLineDash([]);
@@ -420,28 +430,12 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   }, [activeTool, ctImages.length]);
 
 
-  // COMPLETELY NEW APPROACH: React event handlers instead of addEventListener
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    console.log('🟢 REACT onMouseDown triggered!');
-    
-    const canvas = canvasRef.current;
-    if (!canvas) {
-      console.log('❌ No canvas ref');
-      return;
-    }
-    
-    const rect = canvas.getBoundingClientRect();
-    const canvasPos = {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top
-    };
-    
-    // Convert canvas coordinates to world coordinates using the same transform logic
+  // Helper function to convert canvas coordinates to world coordinates  
+  const canvasToWorld = (canvasX: number, canvasY: number) => {
     const currentImage = ctImages[currentSlice];
-    if (!currentImage) return;
+    if (!currentImage) return { x: 0, y: 0, z: 0 };
     
-    // Get the same image bounds calculations from renderImage
-    const canvasSize = 800; // Same as in useEffect
+    const canvasSize = 800;
     const imageAspect = currentImage.width / currentImage.height;
     const canvasAspect = 1;
     
@@ -472,24 +466,42 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       scaleY: drawHeight / currentImage.height
     };
     
-    // Convert canvas coordinates back to world coordinates
     const imagePosition = currentImage.imagePosition || [0, 0, currentImage.imagePosition?.[2] || 0];
     const pixelSpacing = currentImage.pixelSpacing || [1, 1];
     
     // Convert canvas position to image pixel coordinates
-    const pixelX = (canvasPos.x - imageBounds.x) / imageBounds.scaleX;
-    const pixelY = (canvasPos.y - imageBounds.y) / imageBounds.scaleY;
+    const pixelX = (canvasX - imageBounds.x) / imageBounds.scaleX;
+    const pixelY = (canvasY - imageBounds.y) / imageBounds.scaleY;
     
     // Convert to world coordinates
     const worldX = imagePosition[0] + (pixelX * pixelSpacing[0]);
     const worldY = imagePosition[1] + (pixelY * pixelSpacing[1]);
     const worldZ = imagePosition[2];
     
-    const pos = { x: worldX, y: worldY, z: worldZ };
+    return { x: worldX, y: worldY, z: worldZ };
+  };
+
+  // COMPLETELY NEW APPROACH: React event handlers instead of addEventListener
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    console.log('🟢 REACT onMouseDown triggered!');
+    
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      console.log('❌ No canvas ref');
+      return;
+    }
+    
+    const rect = canvas.getBoundingClientRect();
+    const canvasPos = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    };
+    
+    // Convert to world coordinates using helper function
+    const pos = canvasToWorld(canvasPos.x, canvasPos.y);
     
     console.log('📍 Canvas position:', canvasPos);
     console.log('🎯 World position:', pos);
-    console.log('📐 Image bounds:', imageBounds);
     
     if (activeTool === "brush") {
       console.log('🖌️ Brush tool activated');
@@ -544,10 +556,13 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     if (!canvas) return;
     
     const rect = canvas.getBoundingClientRect();
-    const pos = {
+    const canvasPos = {
       x: e.clientX - rect.left,
       y: e.clientY - rect.top
     };
+    
+    // Convert to world coordinates using the same helper function
+    const pos = canvasToWorld(canvasPos.x, canvasPos.y);
     
     console.log('🖱️ Mouse move while drawing:', pos);
     
