@@ -429,6 +429,54 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     };
   }, [activeTool, ctImages.length]);
 
+  // EMERGENCY FIX: Add DOM event listeners as fallback for mouse events
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleDOMMouseDown = (e: MouseEvent) => {
+      console.log('🆘 DOM mousedown triggered as fallback!');
+      console.log('🆘 DOM Event details:', { clientX: e.clientX, clientY: e.clientY, button: e.button });
+      
+      // Convert DOM event to React-like event object
+      const reactEvent = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        button: e.button,
+        preventDefault: () => e.preventDefault(),
+        stopPropagation: () => e.stopPropagation(),
+        currentTarget: canvas
+      } as React.MouseEvent<HTMLCanvasElement>;
+      
+      handleCanvasMouseDown(reactEvent);
+    };
+
+    const handleDOMMouseUp = (e: MouseEvent) => {
+      console.log('🆘 DOM mouseup triggered as fallback!');
+      const reactEvent = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        button: e.button,
+        preventDefault: () => e.preventDefault(),
+        stopPropagation: () => e.stopPropagation(),
+        currentTarget: canvas
+      } as React.MouseEvent<HTMLCanvasElement>;
+      
+      handleCanvasMouseUp(reactEvent);
+    };
+
+    // Add DOM listeners as emergency fallback
+    canvas.addEventListener('mousedown', handleDOMMouseDown);
+    canvas.addEventListener('mouseup', handleDOMMouseUp);
+    
+    console.log('🆘 Emergency DOM listeners added!');
+    
+    return () => {
+      canvas.removeEventListener('mousedown', handleDOMMouseDown);
+      canvas.removeEventListener('mouseup', handleDOMMouseUp);
+    };
+  }, [activeTool, ctImages.length]);
+
 
   // Helper function to convert canvas coordinates to world coordinates  
   const canvasToWorld = (canvasX: number, canvasY: number) => {
