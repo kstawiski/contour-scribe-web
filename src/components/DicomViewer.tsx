@@ -902,17 +902,25 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                 onClick={handleCanvasClick}
                 onMouseDown={(e) => {
                   console.log('🔴 DIRECT onMouseDown triggered!');
-                  e.stopPropagation();
-                  e.preventDefault();
+                  console.log('🔴 Event details:', { clientX: e.clientX, clientY: e.clientY, button: e.button });
                   handleCanvasMouseDown(e);
                 }}
                 onMouseMove={(e) => {
-                  console.log('🔵 DIRECT onMouseMove triggered!');
+                  if (isDrawing) {
+                    console.log('🔵 DIRECT onMouseMove triggered while drawing!');
+                  }
                   handleCanvasMouseMove(e);
                 }}
                 onMouseUp={(e) => {
                   console.log('🟡 DIRECT onMouseUp triggered!');
                   handleCanvasMouseUp(e);
+                }}
+                onPointerDown={(e) => {
+                  console.log('👆 POINTER DOWN triggered!', e.clientX, e.clientY);
+                  // Fallback for touch devices or if mouse events don't work
+                  if (activeTool === "brush") {
+                    handleCanvasMouseDown(e as any);
+                  }
                 }}
               />
               
