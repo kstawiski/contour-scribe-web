@@ -337,7 +337,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.setLineDash([]);
     });
 
-    // Render user-drawn contours - convert world coordinates back to canvas
+    // Render user-drawn contours - stored as canvas coordinates, no conversion needed
     console.log('🎨 Rendering contours debug:', {
       totalContours: drawnContours.length,
       contoursOnSlice: drawnContours.filter(c => c.sliceIndex === currentSlice).length,
@@ -351,20 +351,17 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         const structure = structures.find(s => s.id === contour.structureId);
         if (!structure?.visible) return;
         
-        ctx.strokeStyle = structure.color;
+        ctx.strokeStyle = structure.color || '#ff0000';
         ctx.lineWidth = 3;
         ctx.setLineDash(structure.isEditing ? [5, 5] : []);
         
         if (contour.points.length > 1) {
           ctx.beginPath();
-          // Convert first world coordinate point back to canvas coordinates
-          const firstCanvasPoint = worldToCanvas(contour.points[0].x, contour.points[0].y);
-          ctx.moveTo(firstCanvasPoint.x, firstCanvasPoint.y);
+          // Use canvas coordinates directly - no conversion needed
+          ctx.moveTo(contour.points[0].x, contour.points[0].y);
           
           contour.points.slice(1).forEach(point => {
-            // Convert each world coordinate point back to canvas coordinates
-            const canvasPoint = worldToCanvas(point.x, point.y);
-            ctx.lineTo(canvasPoint.x, canvasPoint.y);
+            ctx.lineTo(point.x, point.y);
           });
           ctx.stroke();
         }
@@ -372,27 +369,21 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         ctx.setLineDash([]);
       });
     
-    // Render current drawing path (live preview) - convert world coordinates
+    // Render current drawing path (live preview) - stored as canvas coordinates
     if (currentPath.length > 1) {
-      const editingStructure = structures.find(s => s.isEditing);
-      if (editingStructure) {
-        ctx.strokeStyle = editingStructure.color;
-        ctx.lineWidth = 3;
-        ctx.setLineDash([2, 2]);
-        
-        ctx.beginPath();
-        // Convert first world coordinate point back to canvas coordinates
-        const firstCanvasPoint = worldToCanvas(currentPath[0].x, currentPath[0].y);
-        ctx.moveTo(firstCanvasPoint.x, firstCanvasPoint.y);
-        
-        currentPath.slice(1).forEach(point => {
-          // Convert each world coordinate point back to canvas coordinates
-          const canvasPoint = worldToCanvas(point.x, point.y);
-          ctx.lineTo(canvasPoint.x, canvasPoint.y);
-        });
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+      ctx.strokeStyle = '#ff0000'; // Red for current drawing
+      ctx.lineWidth = 3;
+      ctx.setLineDash([2, 2]);
+      
+      ctx.beginPath();
+      // Use canvas coordinates directly - no conversion needed
+      ctx.moveTo(currentPath[0].x, currentPath[0].y);
+      
+      currentPath.slice(1).forEach(point => {
+        ctx.lineTo(point.x, point.y);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     // Enhanced debug overlay with coordinate info
@@ -485,62 +476,82 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     };
   }, [activeTool, ctImages.length]);
 
-  // EMERGENCY FIX: Add DOM event listeners as fallback for mouse events
+  // Clean, single pointer event system
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const handleDOMMouseDown = (e: MouseEvent) => {
-      console.log('🆘 DOM mousedown triggered as fallback!');
-      console.log('🆘 DOM Event details:', { clientX: e.clientX, clientY: e.clientY, button: e.button });
+    const handlePointerDown = (e: PointerEvent) => {
+      if (activeTool !== "brush") return;
       
-      // Convert DOM event to React-like event object
-      const reactEvent = {
-        clientX: e.clientX,
-        clientY: e.clientY,
-        button: e.button,
-        preventDefault: () => e.preventDefault(),
-        stopPropagation: () => e.stopPropagation(),
-        currentTarget: canvas
-      } as React.MouseEvent<HTMLCanvasElement>;
+      e.preventDefault();
+      canvas.setPointerCapture(e.pointerId);
       
-      handleCanvasMouseDown(reactEvent);
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      console.log('🎯 Pointer DOWN:', { x, y });
+      
+      setIsDrawing(true);
+      setCurrentPath([{ x, y }]); // Store canvas coordinates directly
     };
 
-    const handleDOMMouseUp = (e: MouseEvent) => {
-      console.log('🆘 DOM mouseup triggered as fallback!');
-      console.log('🆘 Emergency mouseup details:', {
-        button: e.button,
-        isDrawing: isDrawing,
-        pathLength: currentPath.length,
-        clientX: e.clientX,
-        clientY: e.clientY
-      });
+    const handlePointerMove = (e: PointerEvent) => {
+      if (!isDrawing || activeTool !== "brush") return;
       
-      // Call the React handler directly
-      const reactEvent = {
-        clientX: e.clientX,
-        clientY: e.clientY,
-        button: e.button,
-        preventDefault: () => e.preventDefault(),
-        stopPropagation: () => e.stopPropagation(),
-        currentTarget: canvas
-      } as React.MouseEvent<HTMLCanvasElement>;
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
       
-      handleCanvasMouseUp(reactEvent);
+      setCurrentPath(prev => [...prev, { x, y }]);
     };
 
-    console.log('🆘 Emergency DOM listeners added!');
-    
-    // Add DOM listeners as emergency fallback
-    canvas.addEventListener('mousedown', handleDOMMouseDown);
-    canvas.addEventListener('mouseup', handleDOMMouseUp);
-    
+    const handlePointerUp = (e: PointerEvent) => {
+      if (!isDrawing) return;
+      
+      e.preventDefault();
+      canvas.releasePointerCapture(e.pointerId);
+      
+      console.log('🎯 Pointer UP - Saving contour');
+      
+      // Save the drawing immediately
+      if (currentPath.length > 1) {
+        const newContour: DrawnContour = {
+          points: currentPath.map(p => ({ x: p.x, y: p.y })),
+          sliceIndex: currentSlice,
+          structureId: 'user_drawn_structure'
+        };
+        
+        setDrawnContours(prev => {
+          const updated = [...prev, newContour];
+          console.log('✅ Contour saved! Total:', updated.length);
+          return updated;
+        });
+        
+        toast({
+          title: "Drawing saved!",
+          description: `${currentPath.length} points on slice ${currentSlice + 1}`,
+        });
+      }
+      
+      setIsDrawing(false);
+      setCurrentPath([]);
+    };
+
+    canvas.addEventListener('pointerdown', handlePointerDown);
+    canvas.addEventListener('pointermove', handlePointerMove);
+    canvas.addEventListener('pointerup', handlePointerUp);
+    canvas.addEventListener('pointercancel', handlePointerUp);
+
     return () => {
-      canvas.removeEventListener('mousedown', handleDOMMouseDown);
-      canvas.removeEventListener('mouseup', handleDOMMouseUp);
+      canvas.removeEventListener('pointerdown', handlePointerDown);
+      canvas.removeEventListener('pointermove', handlePointerMove);
+      canvas.removeEventListener('pointerup', handlePointerUp);
+      canvas.removeEventListener('pointercancel', handlePointerUp);
     };
-  }, [activeTool, ctImages.length]);
+  }, [activeTool, isDrawing, currentPath, currentSlice]);
 
 
   // Helper function to convert canvas coordinates to world coordinates  
@@ -644,216 +655,8 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     return { x: canvasX, y: canvasY };
   };
 
-  // COMPLETELY NEW APPROACH: React event handlers instead of addEventListener
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    console.log('🟢 REACT onMouseDown triggered!');
-    console.log('🔴 EMERGENCY DEBUG: Mouse down handler called!');
-    
-    const canvas = canvasRef.current;
-    if (!canvas) {
-      console.log('❌ No canvas ref');
-      return;
-    }
-    
-    const rect = canvas.getBoundingClientRect();
-    const canvasPos = {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top
-    };
-    
-    // Convert to world coordinates using helper function
-    const pos = canvasToWorld(canvasPos.x, canvasPos.y);
-    
-    // EXTENSIVE DEBUGGING FOR COORDINATE CONVERSION
-    console.log('🔍 COORDINATE DEBUGGING:');
-    console.log('📍 Raw canvas click:', canvasPos);
-    console.log('🎯 Converted to world:', pos);
-    
-    // Test round-trip conversion
-    const testCanvasPoint = worldToCanvas(pos.x, pos.y);
-    console.log('🔄 Round-trip back to canvas:', testCanvasPoint);
-    console.log('📐 Offset difference:', {
-      x: canvasPos.x - testCanvasPoint.x,
-      y: canvasPos.y - testCanvasPoint.y
-    });
-    
-    // Log transformation parameters
-    const currentImage = ctImages[currentSlice];
-    if (currentImage) {
-      console.log('🖼️ Image info:', {
-        width: currentImage.width,
-        height: currentImage.height,
-        imagePosition: currentImage.imagePosition,
-        pixelSpacing: currentImage.pixelSpacing,
-        zoom,
-        pan
-      });
-    }
-    
-    if (activeTool === "brush") {
-      console.log('🖌️ Brush tool activated');
-      
-      // VISUAL DEBUGGING: Mark the actual click position on canvas
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          // Draw a big red dot at the actual click position
-          ctx.fillStyle = "#ff0000";
-          ctx.beginPath();
-          ctx.arc(canvasPos.x, canvasPos.y, 8, 0, 2 * Math.PI);
-          ctx.fill();
-          
-          // Draw a big blue dot at where we think we clicked after conversion
-          const backConverted = worldToCanvas(pos.x, pos.y);
-          ctx.fillStyle = "#0000ff";
-          ctx.beginPath();
-          ctx.arc(backConverted.x, backConverted.y, 6, 0, 2 * Math.PI);
-          ctx.fill();
-          
-          // Draw a line between them to see the offset
-          ctx.strokeStyle = "#ffff00";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(canvasPos.x, canvasPos.y);
-          ctx.lineTo(backConverted.x, backConverted.y);
-          ctx.stroke();
-        }
-      }
-      
-      // Find existing editing structure or create one
-      let editingStructure = structures.find(s => s.isEditing);
-      
-      if (!editingStructure) {
-        const newStructure: Structure = {
-          id: `user_structure_${Date.now()}`,
-          name: `New Structure`,
-          color: "#ff0000",
-          visible: true,
-          isEditing: true
-        };
-        
-        console.log('🏗️ Creating new structure:', newStructure);
-        setStructures(prev => [...prev.map(s => ({ ...s, isEditing: false })), newStructure]);
-        editingStructure = newStructure;
-      }
-      
-      setIsDrawing(true);
-      setCurrentPath([pos]);
-      console.log('✅ Started drawing for structure:', editingStructure.name);
-      
-    } else if (activeTool === "eraser") {
-      console.log('🧽 Eraser tool activated');
-      const beforeCount = drawnContours.length;
-      
-      setDrawnContours(prev => {
-        const filtered = prev.filter(contour => {
-          if (contour.sliceIndex !== currentSlice) return true;
-          
-          return !contour.points.some(point => {
-            const dx = point.x - pos.x;
-            const dy = point.y - pos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            return distance <= 50; // Large erase radius for testing
-          });
-        });
-        
-        console.log(`🗑️ Erased ${beforeCount - filtered.length} contours`);
-        return filtered;
-      });
-    }
-  };
-
-  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    // SAFETY CHECK: Only allow drawing if mouse down was properly triggered
-    if (!isDrawing) {
-      console.log('🚫 Mouse move ignored - not in drawing mode');
-      return;
-    }
-    
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const canvasPos = {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top
-    };
-    
-    // Convert to world coordinates using the same helper function
-    const pos = canvasToWorld(canvasPos.x, canvasPos.y);
-    
-    console.log('🖱️ Mouse move while drawing:', pos);
-    
-    setCurrentPath(prev => {
-      const newPath = [...prev, pos];
-      console.log('📏 Path length:', newPath.length);
-      return newPath;
-    });
-  };
-
-  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    console.log('🔴 REACT onMouseUp triggered', {
-      isDrawing,
-      pathLength: currentPath.length,
-      hasEditingStructure: structures.some(s => s.isEditing)
-    });
-    
-    // SAVE THE DRAWING STATE IMMEDIATELY - don't let it change
-    const wasDrawing = isDrawing;
-    const pathLength = currentPath.length;
-    const currentPathSnapshot = [...currentPath];
-    
-    console.log('📸 Snapshot taken:', { wasDrawing, pathLength, snapshotLength: currentPathSnapshot.length });
-    
-    // FORCE SAVE: Always save if we have drawing data, regardless of conditions
-    if (currentPathSnapshot.length > 0) {
-      let editingStructure = structures.find(s => s.isEditing);
-      
-      // Auto-create editing structure if none exists
-      if (!editingStructure) {
-        const newStructure: Structure = {
-          id: `drawn_structure_${Date.now()}`,
-          name: `Drawn Structure ${drawnContours.length + 1}`,
-          visible: true,
-          isEditing: true,
-          color: '#ff0000'
-        };
-        setStructures(prev => [...prev, newStructure]);
-        editingStructure = newStructure;
-        console.log('🔧 Auto-created editing structure:', editingStructure.id);
-      }
-      
-      console.log('💾 FORCE SAVING contour:', {
-        structureId: editingStructure?.id,
-        pathLength: currentPathSnapshot.length,
-        sliceIndex: currentSlice
-      });
-      
-      const newContour: DrawnContour = {
-        points: currentPathSnapshot.map(p => ({ x: p.x, y: p.y })),
-        sliceIndex: currentSlice,
-        structureId: editingStructure.id
-      };
-      
-      setDrawnContours(prev => {
-        const updated = [...prev, newContour];
-        console.log('💿 FORCE SAVED! Total contours:', updated.length);
-        return updated;
-      });
-      
-      toast({
-        title: "Drawing saved!",
-        description: `${currentPathSnapshot.length} points on slice ${currentSlice + 1}`,
-      });
-    } else {
-      console.log('❌ No drawing data to save');
-    }
-    
-    setIsDrawing(false);
-    setCurrentPath([]);
-    console.log('🏁 Drawing finished');
-  };
+  // Store canvas coordinates directly in the drawing path instead of world coordinates
+  // This eliminates coordinate conversion errors and offset issues
 
   // Add click test handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1042,29 +845,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                   touchAction: "none",
                   userSelect: "none",
                   backgroundColor: "rgba(255,0,0,0.1)" // Red tint to see canvas bounds
-                }}
-                onClick={handleCanvasClick}
-                onMouseDown={(e) => {
-                  console.log('🔴 DIRECT onMouseDown triggered!');
-                  console.log('🔴 Event details:', { clientX: e.clientX, clientY: e.clientY, button: e.button });
-                  handleCanvasMouseDown(e);
-                }}
-                onMouseMove={(e) => {
-                  if (isDrawing) {
-                    console.log('🔵 DIRECT onMouseMove triggered while drawing!');
-                  }
-                  handleCanvasMouseMove(e);
-                }}
-                onMouseUp={(e) => {
-                  console.log('🟡 DIRECT onMouseUp triggered!');
-                  handleCanvasMouseUp(e);
-                }}
-                onPointerDown={(e) => {
-                  console.log('👆 POINTER DOWN triggered!', e.clientX, e.clientY);
-                  // Fallback for touch devices or if mouse events don't work
-                  if (activeTool === "brush") {
-                    handleCanvasMouseDown(e as any);
-                  }
                 }}
               />
               
