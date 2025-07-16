@@ -57,10 +57,29 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   
-  // Drawing state with debugging
+  // Drawing state with AGGRESSIVE debugging
   const [drawnContours, setDrawnContours] = useState<DrawnContour[]>([]);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [currentPath, setCurrentPath] = useState<{ x: number; y: number; z?: number }[]>([]);
+  
+  const [isDrawing, setIsDrawingInternal] = useState(false);
+  const setIsDrawing = (value: boolean) => {
+    console.log('🔥 setIsDrawing called!', { 
+      from: isDrawing, 
+      to: value, 
+      stack: new Error().stack?.split('\n')[2] // Show where it was called from
+    });
+    setIsDrawingInternal(value);
+  };
+  
+  const [currentPath, setCurrentPathInternal] = useState<{ x: number; y: number; z?: number }[]>([]);
+  const setCurrentPath = (value: any) => {
+    const newPath = typeof value === 'function' ? value(currentPath) : value;
+    console.log('🔥 setCurrentPath called!', { 
+      fromLength: currentPath.length, 
+      toLength: Array.isArray(newPath) ? newPath.length : 'unknown',
+      stack: new Error().stack?.split('\n')[2] // Show where it was called from
+    });
+    setCurrentPathInternal(newPath);
+  };
 
   // Structure state - only include RT structures, remove default mock structures
   const [structures, setStructures] = useState<Structure[]>(() => {
