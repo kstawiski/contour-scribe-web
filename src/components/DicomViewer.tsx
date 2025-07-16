@@ -900,12 +900,19 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                   backgroundColor: "rgba(255,0,0,0.1)" // Red tint to see canvas bounds
                 }}
                 onClick={handleCanvasClick}
-                onMouseDown={handleCanvasMouseDown}
-                onMouseMove={handleCanvasMouseMove}
-                onMouseUp={handleCanvasMouseUp}
-                onPointerDown={(e) => {
-                  console.log('🔵 POINTER DOWN:', e.clientX, e.clientY);
-                  handleCanvasMouseDown(e as any);
+                onMouseDown={(e) => {
+                  console.log('🔴 DIRECT onMouseDown triggered!');
+                  e.stopPropagation();
+                  e.preventDefault();
+                  handleCanvasMouseDown(e);
+                }}
+                onMouseMove={(e) => {
+                  console.log('🔵 DIRECT onMouseMove triggered!');
+                  handleCanvasMouseMove(e);
+                }}
+                onMouseUp={(e) => {
+                  console.log('🟡 DIRECT onMouseUp triggered!');
+                  handleCanvasMouseUp(e);
                 }}
               />
               
