@@ -534,6 +534,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   // COMPLETELY NEW APPROACH: React event handlers instead of addEventListener
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     console.log('🟢 REACT onMouseDown triggered!');
+    console.log('🔴 EMERGENCY DEBUG: Mouse down handler called!');
     
     const canvas = canvasRef.current;
     if (!canvas) {
