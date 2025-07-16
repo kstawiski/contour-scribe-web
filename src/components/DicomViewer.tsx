@@ -57,10 +57,10 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   
-  // Drawing state
+  // Drawing state with debugging
   const [drawnContours, setDrawnContours] = useState<DrawnContour[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [currentPath, setCurrentPath] = useState<{ x: number; y: number }[]>([]);
+  const [currentPath, setCurrentPath] = useState<{ x: number; y: number; z?: number }[]>([]);
 
   // Structure state - only include RT structures, remove default mock structures
   const [structures, setStructures] = useState<Structure[]>(() => {
@@ -81,6 +81,36 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     
     return editableStructures;
   });
+
+  // Debug when drawing state changes - MOVED AFTER structures declaration
+  useEffect(() => {
+    console.log('🔄 Drawing state changed:', { isDrawing, pathLength: currentPath.length });
+    
+    // EMERGENCY SAVE: If we have a path but drawing stops unexpectedly, save it
+    if (!isDrawing && currentPath.length > 5) {
+      console.log('🆘 EMERGENCY SAVE: Drawing stopped with unsaved path!');
+      const editingStructure = structures.find(s => s.isEditing);
+      
+      if (editingStructure) {
+        const newContour: DrawnContour = {
+          points: currentPath.map(p => ({ x: p.x, y: p.y })),
+          sliceIndex: currentSlice,
+          structureId: editingStructure.id
+        };
+        
+        setDrawnContours(prev => {
+          const updated = [...prev, newContour];
+          console.log('🆘 Emergency saved! Total contours now:', updated.length);
+          return updated;
+        });
+        
+        toast({
+          title: "Emergency save!",
+          description: `Saved ${currentPath.length} points`,
+        });
+      }
+    }
+  }, [isDrawing, currentPath.length, structures, currentSlice]);
 
   // Canvas setup and rendering
   useEffect(() => {
