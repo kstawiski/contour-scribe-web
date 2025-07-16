@@ -423,14 +423,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   // COMPLETELY NEW APPROACH: React event handlers instead of addEventListener
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     console.log('🟢 REACT onMouseDown triggered!');
-    console.log('Event details:', {
-      clientX: e.clientX,
-      clientY: e.clientY,
-      button: e.button,
-      target: e.currentTarget,
-      activeTool,
-      isDrawing
-    });
     
     const canvas = canvasRef.current;
     if (!canvas) {
@@ -444,12 +436,60 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       y: e.clientY - rect.top
     };
     
-    // Use raw canvas coordinates for drawing - no transformation needed
-    const pos = canvasPos;
+    // Convert canvas coordinates to world coordinates using the same transform logic
+    const currentImage = ctImages[currentSlice];
+    if (!currentImage) return;
+    
+    // Get the same image bounds calculations from renderImage
+    const canvasSize = 800; // Same as in useEffect
+    const imageAspect = currentImage.width / currentImage.height;
+    const canvasAspect = 1;
+    
+    let drawWidth = currentImage.width;
+    let drawHeight = currentImage.height;
+    
+    const maxSize = canvasSize * 0.95;
+    if (imageAspect > canvasAspect) {
+      drawWidth = maxSize;
+      drawHeight = drawWidth / imageAspect;
+    } else {
+      drawHeight = maxSize;
+      drawWidth = drawHeight * imageAspect;
+    }
+    
+    drawWidth *= zoom;
+    drawHeight *= zoom;
+    
+    const imageX = (canvasSize - drawWidth) / 2 + pan.x;
+    const imageY = (canvasSize - drawHeight) / 2 + pan.y;
+    
+    const imageBounds = {
+      x: imageX,
+      y: imageY,
+      width: drawWidth,
+      height: drawHeight,
+      scaleX: drawWidth / currentImage.width,
+      scaleY: drawHeight / currentImage.height
+    };
+    
+    // Convert canvas coordinates back to world coordinates
+    const imagePosition = currentImage.imagePosition || [0, 0, currentImage.imagePosition?.[2] || 0];
+    const pixelSpacing = currentImage.pixelSpacing || [1, 1];
+    
+    // Convert canvas position to image pixel coordinates
+    const pixelX = (canvasPos.x - imageBounds.x) / imageBounds.scaleX;
+    const pixelY = (canvasPos.y - imageBounds.y) / imageBounds.scaleY;
+    
+    // Convert to world coordinates
+    const worldX = imagePosition[0] + (pixelX * pixelSpacing[0]);
+    const worldY = imagePosition[1] + (pixelY * pixelSpacing[1]);
+    const worldZ = imagePosition[2];
+    
+    const pos = { x: worldX, y: worldY, z: worldZ };
     
     console.log('📍 Canvas position:', canvasPos);
-    console.log('🎯 Drawing position:', pos);
-    console.log('📐 Canvas rect:', rect);
+    console.log('🎯 World position:', pos);
+    console.log('📐 Image bounds:', imageBounds);
     
     if (activeTool === "brush") {
       console.log('🖌️ Brush tool activated');
