@@ -337,7 +337,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       ctx.setLineDash([]);
     });
 
-    // Render user-drawn contours - stored as canvas coordinates, no conversion needed
+    // Render user-drawn contours with proper coordinate conversion like DICOM contours
     console.log('🎨 Rendering contours debug:', {
       totalContours: drawnContours.length,
       contoursOnSlice: drawnContours.filter(c => c.sliceIndex === currentSlice).length,
@@ -357,11 +357,13 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         
         if (contour.points.length > 1) {
           ctx.beginPath();
-          // Use canvas coordinates directly - no conversion needed
-          ctx.moveTo(contour.points[0].x, contour.points[0].y);
+          // Convert world coordinates to canvas coordinates for rendering (like DICOM contours)
+          const firstCanvasPoint = worldToCanvas(contour.points[0].x, contour.points[0].y);
+          ctx.moveTo(firstCanvasPoint.x, firstCanvasPoint.y);
           
           contour.points.slice(1).forEach(point => {
-            ctx.lineTo(point.x, point.y);
+            const canvasPoint = worldToCanvas(point.x, point.y);
+            ctx.lineTo(canvasPoint.x, canvasPoint.y);
           });
           ctx.stroke();
         }
@@ -369,18 +371,20 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         ctx.setLineDash([]);
       });
     
-    // Render current drawing path (live preview) - stored as canvas coordinates
+    // Render current drawing path (live preview) - convert from world to canvas coordinates
     if (currentPath.length > 1) {
       ctx.strokeStyle = '#ff0000'; // Red for current drawing
       ctx.lineWidth = 3;
       ctx.setLineDash([2, 2]);
       
       ctx.beginPath();
-      // Use canvas coordinates directly - no conversion needed
-      ctx.moveTo(currentPath[0].x, currentPath[0].y);
+      // Convert world coordinates to canvas coordinates for rendering
+      const firstCanvasPoint = worldToCanvas(currentPath[0].x, currentPath[0].y);
+      ctx.moveTo(firstCanvasPoint.x, firstCanvasPoint.y);
       
       currentPath.slice(1).forEach(point => {
-        ctx.lineTo(point.x, point.y);
+        const canvasPoint = worldToCanvas(point.x, point.y);
+        ctx.lineTo(canvasPoint.x, canvasPoint.y);
       });
       ctx.stroke();
       ctx.setLineDash([]);
@@ -476,84 +480,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     };
   }, [activeTool, ctImages.length]);
 
-  // Clean, single pointer event system
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const handlePointerDown = (e: PointerEvent) => {
-      if (activeTool !== "brush") return;
-      
-      e.preventDefault();
-      canvas.setPointerCapture(e.pointerId);
-      
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      
-      console.log('🎯 Pointer DOWN:', { x, y });
-      
-      setIsDrawing(true);
-      setCurrentPath([{ x, y }]); // Store canvas coordinates directly
-    };
-
-    const handlePointerMove = (e: PointerEvent) => {
-      if (!isDrawing || activeTool !== "brush") return;
-      
-      e.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      
-      setCurrentPath(prev => [...prev, { x, y }]);
-    };
-
-    const handlePointerUp = (e: PointerEvent) => {
-      if (!isDrawing) return;
-      
-      e.preventDefault();
-      canvas.releasePointerCapture(e.pointerId);
-      
-      console.log('🎯 Pointer UP - Saving contour');
-      
-      // Save the drawing immediately
-      if (currentPath.length > 1) {
-        const newContour: DrawnContour = {
-          points: currentPath.map(p => ({ x: p.x, y: p.y })),
-          sliceIndex: currentSlice,
-          structureId: 'user_drawn_structure'
-        };
-        
-        setDrawnContours(prev => {
-          const updated = [...prev, newContour];
-          console.log('✅ Contour saved! Total:', updated.length);
-          return updated;
-        });
-        
-        toast({
-          title: "Drawing saved!",
-          description: `${currentPath.length} points on slice ${currentSlice + 1}`,
-        });
-      }
-      
-      setIsDrawing(false);
-      setCurrentPath([]);
-    };
-
-    canvas.addEventListener('pointerdown', handlePointerDown);
-    canvas.addEventListener('pointermove', handlePointerMove);
-    canvas.addEventListener('pointerup', handlePointerUp);
-    canvas.addEventListener('pointercancel', handlePointerUp);
-
-    return () => {
-      canvas.removeEventListener('pointerdown', handlePointerDown);
-      canvas.removeEventListener('pointermove', handlePointerMove);
-      canvas.removeEventListener('pointerup', handlePointerUp);
-      canvas.removeEventListener('pointercancel', handlePointerUp);
-    };
-  }, [activeTool, isDrawing, currentPath, currentSlice]);
-
-
   // Helper function to convert canvas coordinates to world coordinates  
   const canvasToWorld = (canvasX: number, canvasY: number) => {
     const currentImage = ctImages[currentSlice];
@@ -605,6 +531,90 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     return { x: worldX, y: worldY, z: worldZ };
   };
 
+  // Clean, single pointer event system
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handlePointerDown = (e: PointerEvent) => {
+      if (activeTool !== "brush") return;
+      
+      e.preventDefault();
+      canvas.setPointerCapture(e.pointerId);
+      
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      console.log('🎯 Pointer DOWN:', { x, y });
+      
+      // Convert to world coordinates immediately for consistency with DICOM contours
+      const worldCoords = canvasToWorld(x, y);
+      console.log('🌍 World coords:', worldCoords);
+      
+      setIsDrawing(true);
+      setCurrentPath([worldCoords]); // Store world coordinates like DICOM contours
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (!isDrawing || activeTool !== "brush") return;
+      
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      // Convert to world coordinates like we do in pointer down
+      const worldCoords = canvasToWorld(x, y);
+      setCurrentPath(prev => [...prev, worldCoords]);
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      if (!isDrawing) return;
+      
+      e.preventDefault();
+      canvas.releasePointerCapture(e.pointerId);
+      
+      console.log('🎯 Pointer UP - Saving contour');
+      
+      // Save the drawing immediately
+      if (currentPath.length > 1) {
+        const newContour: DrawnContour = {
+          points: currentPath.map(p => ({ x: p.x, y: p.y })),
+          sliceIndex: currentSlice,
+          structureId: 'user_drawn_structure'
+        };
+        
+        setDrawnContours(prev => {
+          const updated = [...prev, newContour];
+          console.log('✅ Contour saved! Total:', updated.length);
+          return updated;
+        });
+        
+        toast({
+          title: "Drawing saved!",
+          description: `${currentPath.length} points on slice ${currentSlice + 1}`,
+        });
+      }
+      
+      setIsDrawing(false);
+      setCurrentPath([]);
+    };
+
+    canvas.addEventListener('pointerdown', handlePointerDown);
+    canvas.addEventListener('pointermove', handlePointerMove);
+    canvas.addEventListener('pointerup', handlePointerUp);
+    canvas.addEventListener('pointercancel', handlePointerUp);
+
+    return () => {
+      canvas.removeEventListener('pointerdown', handlePointerDown);
+      canvas.removeEventListener('pointermove', handlePointerMove);
+      canvas.removeEventListener('pointerup', handlePointerUp);
+      canvas.removeEventListener('pointercancel', handlePointerUp);
+    };
+  }, [activeTool, isDrawing, currentPath, currentSlice, zoom, pan]);
+
+
   // Helper function to convert world coordinates back to canvas coordinates
   const worldToCanvas = (worldX: number, worldY: number) => {
     const currentImage = ctImages[currentSlice];
@@ -654,9 +664,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     
     return { x: canvasX, y: canvasY };
   };
-
-  // Store canvas coordinates directly in the drawing path instead of world coordinates
-  // This eliminates coordinate conversion errors and offset issues
 
   // Add click test handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
