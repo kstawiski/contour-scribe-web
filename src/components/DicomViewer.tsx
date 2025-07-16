@@ -799,10 +799,12 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     
     if (wasDrawing && pathLength > 2) {
       const editingStructure = structures.find(s => s.isEditing);
-      console.log('💾 Saving contour:', {
+      console.log('💾 Save condition MET - attempting save:', {
+        wasDrawing,
+        pathLength,
         structureId: editingStructure?.id,
-        pathLength: currentPath.length,
-        sliceIndex: currentSlice
+        sliceIndex: currentSlice,
+        hasEditingStructure: !!editingStructure
       });
       
       if (editingStructure) {
