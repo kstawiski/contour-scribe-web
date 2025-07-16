@@ -797,42 +797,48 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     
     console.log('📸 Snapshot taken:', { wasDrawing, pathLength, snapshotLength: currentPathSnapshot.length });
     
-    if (wasDrawing && pathLength > 2) {
-      const editingStructure = structures.find(s => s.isEditing);
-      console.log('💾 Save condition MET - attempting save:', {
-        wasDrawing,
-        pathLength,
+    // FORCE SAVE: Always save if we have drawing data, regardless of conditions
+    if (currentPathSnapshot.length > 0) {
+      let editingStructure = structures.find(s => s.isEditing);
+      
+      // Auto-create editing structure if none exists
+      if (!editingStructure) {
+        const newStructure: Structure = {
+          id: `drawn_structure_${Date.now()}`,
+          name: `Drawn Structure ${drawnContours.length + 1}`,
+          visible: true,
+          isEditing: true,
+          color: '#ff0000'
+        };
+        setStructures(prev => [...prev, newStructure]);
+        editingStructure = newStructure;
+        console.log('🔧 Auto-created editing structure:', editingStructure.id);
+      }
+      
+      console.log('💾 FORCE SAVING contour:', {
         structureId: editingStructure?.id,
-        sliceIndex: currentSlice,
-        hasEditingStructure: !!editingStructure
+        pathLength: currentPathSnapshot.length,
+        sliceIndex: currentSlice
       });
       
-      if (editingStructure) {
-        const newContour: DrawnContour = {
-          points: currentPathSnapshot.map(p => ({ x: p.x, y: p.y })),
-          sliceIndex: currentSlice,
-          structureId: editingStructure.id
-        };
-        
-        setDrawnContours(prev => {
-          const updated = [...prev, newContour];
-          console.log('💿 Saved! Total contours:', updated.length);
-          return updated;
-        });
-        
-        toast({
-          title: "Drawing saved!",
-          description: `${currentPath.length} points on slice ${currentSlice + 1}`,
-        });
-      } else {
-        console.log('❌ No editing structure found!');
-      }
-    } else {
-      console.log('❌ Save condition failed:', {
-        isDrawing,
-        pathLength: currentPath.length,
-        minimumLength: 2
+      const newContour: DrawnContour = {
+        points: currentPathSnapshot.map(p => ({ x: p.x, y: p.y })),
+        sliceIndex: currentSlice,
+        structureId: editingStructure.id
+      };
+      
+      setDrawnContours(prev => {
+        const updated = [...prev, newContour];
+        console.log('💿 FORCE SAVED! Total contours:', updated.length);
+        return updated;
       });
+      
+      toast({
+        title: "Drawing saved!",
+        description: `${currentPathSnapshot.length} points on slice ${currentSlice + 1}`,
+      });
+    } else {
+      console.log('❌ No drawing data to save');
     }
     
     setIsDrawing(false);
