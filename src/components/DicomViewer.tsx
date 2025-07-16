@@ -509,6 +509,15 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
 
     const handleDOMMouseUp = (e: MouseEvent) => {
       console.log('🆘 DOM mouseup triggered as fallback!');
+      console.log('🆘 Emergency mouseup details:', {
+        button: e.button,
+        isDrawing: isDrawing,
+        pathLength: currentPath.length,
+        clientX: e.clientX,
+        clientY: e.clientY
+      });
+      
+      // Call the React handler directly
       const reactEvent = {
         clientX: e.clientX,
         clientY: e.clientY,
@@ -521,11 +530,11 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       handleCanvasMouseUp(reactEvent);
     };
 
+    console.log('🆘 Emergency DOM listeners added!');
+    
     // Add DOM listeners as emergency fallback
     canvas.addEventListener('mousedown', handleDOMMouseDown);
     canvas.addEventListener('mouseup', handleDOMMouseUp);
-    
-    console.log('🆘 Emergency DOM listeners added!');
     
     return () => {
       canvas.removeEventListener('mousedown', handleDOMMouseDown);
