@@ -131,6 +131,39 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     }
   }, [isDrawing, currentPath.length, structures, currentSlice]);
 
+  // Render saved contours on the overlay canvas so they persist
+  useEffect(() => {
+    const overlayCanvas = (window as any).overlayCanvas;
+    if (!overlayCanvas) return;
+    
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Clear overlay and redraw all saved contours for current slice
+    ctx.clearRect(0, 0, 800, 800);
+    
+    drawnContours
+      .filter(contour => contour.sliceIndex === currentSlice)
+      .forEach((contour) => {
+        if (contour.points.length > 1) {
+          ctx.strokeStyle = '#ff0000';
+          ctx.lineWidth = 3;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          
+          ctx.beginPath();
+          ctx.moveTo(contour.points[0].x, contour.points[0].y);
+          
+          contour.points.slice(1).forEach(point => {
+            ctx.lineTo(point.x, point.y);
+          });
+          ctx.stroke();
+        }
+      });
+      
+    console.log('🎨 Overlay updated with', drawnContours.filter(c => c.sliceIndex === currentSlice).length, 'contours');
+  }, [drawnContours, currentSlice]);
+
   // Canvas setup and rendering
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -531,63 +564,84 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     return { x: worldX, y: worldY, z: worldZ };
   };
 
-  // Clean, single pointer event system
+  // Clean drawing system using the overlay canvas
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const interactionCanvas = (window as any).interactionCanvas;
+    const overlayCanvas = (window as any).overlayCanvas;
+    
+    if (!interactionCanvas || !overlayCanvas) return;
 
     const handlePointerDown = (e: PointerEvent) => {
       if (activeTool !== "brush") return;
       
       e.preventDefault();
-      canvas.setPointerCapture(e.pointerId);
+      interactionCanvas.setPointerCapture(e.pointerId);
       
-      const rect = canvas.getBoundingClientRect();
+      const rect = interactionCanvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       
-      console.log('🎯 Pointer DOWN:', { x, y });
+      // Scale coordinates to canvas size
+      const scaleX = 800 / rect.width;
+      const scaleY = 800 / rect.height;
+      const canvasX = x * scaleX;
+      const canvasY = y * scaleY;
       
-      // Convert to world coordinates immediately for consistency with DICOM contours
-      const worldCoords = canvasToWorld(x, y);
-      console.log('🌍 World coords:', worldCoords);
+      console.log('🎯 Starting draw on overlay:', { canvasX, canvasY });
       
       setIsDrawing(true);
-      setCurrentPath([worldCoords]); // Store world coordinates like DICOM contours
+      setCurrentPath([{ x: canvasX, y: canvasY }]);
     };
 
     const handlePointerMove = (e: PointerEvent) => {
       if (!isDrawing || activeTool !== "brush") return;
       
       e.preventDefault();
-      const rect = canvas.getBoundingClientRect();
+      const rect = interactionCanvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       
-      // Convert to world coordinates like we do in pointer down
-      const worldCoords = canvasToWorld(x, y);
-      setCurrentPath(prev => [...prev, worldCoords]);
+      // Scale coordinates to canvas size
+      const scaleX = 800 / rect.width;
+      const scaleY = 800 / rect.height;
+      const canvasX = x * scaleX;
+      const canvasY = y * scaleY;
+      
+      setCurrentPath(prev => [...prev, { x: canvasX, y: canvasY }]);
+      
+      // Draw directly on overlay canvas for immediate feedback
+      const ctx = overlayCanvas.getContext('2d');
+      if (ctx && currentPath.length > 0) {
+        const lastPoint = currentPath[currentPath.length - 1];
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(lastPoint.x, lastPoint.y);
+        ctx.lineTo(canvasX, canvasY);
+        ctx.stroke();
+      }
     };
 
     const handlePointerUp = (e: PointerEvent) => {
       if (!isDrawing) return;
       
       e.preventDefault();
-      canvas.releasePointerCapture(e.pointerId);
+      interactionCanvas.releasePointerCapture(e.pointerId);
       
-      console.log('🎯 Pointer UP - Saving contour');
+      console.log('🎯 Finished drawing - saving contour');
       
       // Save the drawing immediately
       if (currentPath.length > 1) {
         const newContour: DrawnContour = {
           points: currentPath.map(p => ({ x: p.x, y: p.y })),
           sliceIndex: currentSlice,
-          structureId: 'user_drawn_structure'
+          structureId: 'user_drawn_overlay'
         };
         
         setDrawnContours(prev => {
           const updated = [...prev, newContour];
-          console.log('✅ Contour saved! Total:', updated.length);
+          console.log('✅ Overlay contour saved! Total:', updated.length);
           return updated;
         });
         
@@ -601,18 +655,20 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       setCurrentPath([]);
     };
 
-    canvas.addEventListener('pointerdown', handlePointerDown);
-    canvas.addEventListener('pointermove', handlePointerMove);
-    canvas.addEventListener('pointerup', handlePointerUp);
-    canvas.addEventListener('pointercancel', handlePointerUp);
+    interactionCanvas.addEventListener('pointerdown', handlePointerDown);
+    interactionCanvas.addEventListener('pointermove', handlePointerMove);
+    interactionCanvas.addEventListener('pointerup', handlePointerUp);
+    interactionCanvas.addEventListener('pointercancel', handlePointerUp);
 
     return () => {
-      canvas.removeEventListener('pointerdown', handlePointerDown);
-      canvas.removeEventListener('pointermove', handlePointerMove);
-      canvas.removeEventListener('pointerup', handlePointerUp);
-      canvas.removeEventListener('pointercancel', handlePointerUp);
+      if (interactionCanvas) {
+        interactionCanvas.removeEventListener('pointerdown', handlePointerDown);
+        interactionCanvas.removeEventListener('pointermove', handlePointerMove);
+        interactionCanvas.removeEventListener('pointerup', handlePointerUp);
+        interactionCanvas.removeEventListener('pointercancel', handlePointerUp);
+      }
     };
-  }, [activeTool, isDrawing, currentPath, currentSlice, zoom, pan]);
+  }, [activeTool, isDrawing, currentPath, currentSlice]);
 
 
   // Helper function to convert world coordinates back to canvas coordinates
@@ -852,6 +908,41 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                   touchAction: "none",
                   userSelect: "none",
                   backgroundColor: "rgba(255,0,0,0.1)" // Red tint to see canvas bounds
+                }}
+              />
+              
+              {/* SEPARATE OVERLAY CANVAS FOR USER DRAWINGS - Never gets cleared */}
+              <canvas
+                ref={(canvas) => {
+                  if (canvas) {
+                    // Initialize overlay canvas with same dimensions
+                    canvas.width = 800;
+                    canvas.height = 800;
+                    // Store reference for drawing operations
+                    (window as any).overlayCanvas = canvas;
+                  }
+                }}
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  width: "min(calc(100vh - 200px), calc(100vw - 700px))",
+                  height: "min(calc(100vh - 200px), calc(100vw - 700px))",
+                }}
+              />
+              
+              {/* TRANSPARENT INTERACTION CANVAS FOR DRAWING EVENTS */}
+              <canvas
+                ref={(canvas) => {
+                  if (canvas) {
+                    canvas.width = 800;
+                    canvas.height = 800;
+                    (window as any).interactionCanvas = canvas;
+                  }
+                }}
+                className="absolute inset-0"
+                style={{
+                  width: "min(calc(100vh - 200px), calc(100vw - 700px))",
+                  height: "min(calc(100vh - 200px), calc(100vw - 700px))",
+                  backgroundColor: "transparent",
                 }}
               />
               
