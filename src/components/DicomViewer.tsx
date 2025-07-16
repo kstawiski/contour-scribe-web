@@ -784,9 +784,20 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   };
 
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    console.log('🔴 REACT onMouseUp triggered');
+    console.log('🔴 REACT onMouseUp triggered', {
+      isDrawing,
+      pathLength: currentPath.length,
+      hasEditingStructure: structures.some(s => s.isEditing)
+    });
     
-    if (isDrawing && currentPath.length > 2) {
+    // SAVE THE DRAWING STATE IMMEDIATELY - don't let it change
+    const wasDrawing = isDrawing;
+    const pathLength = currentPath.length;
+    const currentPathSnapshot = [...currentPath];
+    
+    console.log('📸 Snapshot taken:', { wasDrawing, pathLength, snapshotLength: currentPathSnapshot.length });
+    
+    if (wasDrawing && pathLength > 2) {
       const editingStructure = structures.find(s => s.isEditing);
       console.log('💾 Saving contour:', {
         structureId: editingStructure?.id,
@@ -796,7 +807,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       
       if (editingStructure) {
         const newContour: DrawnContour = {
-          points: currentPath.map(p => ({ x: p.x, y: p.y })),
+          points: currentPathSnapshot.map(p => ({ x: p.x, y: p.y })),
           sliceIndex: currentSlice,
           structureId: editingStructure.id
         };
@@ -811,7 +822,15 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           title: "Drawing saved!",
           description: `${currentPath.length} points on slice ${currentSlice + 1}`,
         });
+      } else {
+        console.log('❌ No editing structure found!');
       }
+    } else {
+      console.log('❌ Save condition failed:', {
+        isDrawing,
+        pathLength: currentPath.length,
+        minimumLength: 2
+      });
     }
     
     setIsDrawing(false);
