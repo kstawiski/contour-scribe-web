@@ -481,6 +481,56 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     return { x: worldX, y: worldY, z: worldZ };
   };
 
+  // Helper function to convert world coordinates back to canvas coordinates
+  const worldToCanvas = (worldX: number, worldY: number) => {
+    const currentImage = ctImages[currentSlice];
+    if (!currentImage) return { x: 0, y: 0 };
+    
+    const canvasSize = 800;
+    const imageAspect = currentImage.width / currentImage.height;
+    const canvasAspect = 1;
+    
+    let drawWidth = currentImage.width;
+    let drawHeight = currentImage.height;
+    
+    const maxSize = canvasSize * 0.95;
+    if (imageAspect > canvasAspect) {
+      drawWidth = maxSize;
+      drawHeight = drawWidth / imageAspect;
+    } else {
+      drawHeight = maxSize;
+      drawWidth = drawHeight * imageAspect;
+    }
+    
+    drawWidth *= zoom;
+    drawHeight *= zoom;
+    
+    const imageX = (canvasSize - drawWidth) / 2 + pan.x;
+    const imageY = (canvasSize - drawHeight) / 2 + pan.y;
+    
+    const imageBounds = {
+      x: imageX,
+      y: imageY,
+      width: drawWidth,
+      height: drawHeight,
+      scaleX: drawWidth / currentImage.width,
+      scaleY: drawHeight / currentImage.height
+    };
+    
+    const imagePosition = currentImage.imagePosition || [0, 0, 0];
+    const pixelSpacing = currentImage.pixelSpacing || [1, 1];
+    
+    // Convert world coordinates to image pixel coordinates
+    const pixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
+    const pixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
+    
+    // Convert pixel coordinates to canvas coordinates with proper scaling
+    const canvasX = imageX + (pixelX * imageBounds.scaleX);
+    const canvasY = imageY + (pixelY * imageBounds.scaleY);
+    
+    return { x: canvasX, y: canvasY };
+  };
+
   // COMPLETELY NEW APPROACH: React event handlers instead of addEventListener
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     console.log('🟢 REACT onMouseDown triggered!');
@@ -500,11 +550,62 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     // Convert to world coordinates using helper function
     const pos = canvasToWorld(canvasPos.x, canvasPos.y);
     
-    console.log('📍 Canvas position:', canvasPos);
-    console.log('🎯 World position:', pos);
+    // EXTENSIVE DEBUGGING FOR COORDINATE CONVERSION
+    console.log('🔍 COORDINATE DEBUGGING:');
+    console.log('📍 Raw canvas click:', canvasPos);
+    console.log('🎯 Converted to world:', pos);
+    
+    // Test round-trip conversion
+    const testCanvasPoint = worldToCanvas(pos.x, pos.y);
+    console.log('🔄 Round-trip back to canvas:', testCanvasPoint);
+    console.log('📐 Offset difference:', {
+      x: canvasPos.x - testCanvasPoint.x,
+      y: canvasPos.y - testCanvasPoint.y
+    });
+    
+    // Log transformation parameters
+    const currentImage = ctImages[currentSlice];
+    if (currentImage) {
+      console.log('🖼️ Image info:', {
+        width: currentImage.width,
+        height: currentImage.height,
+        imagePosition: currentImage.imagePosition,
+        pixelSpacing: currentImage.pixelSpacing,
+        zoom,
+        pan
+      });
+    }
     
     if (activeTool === "brush") {
       console.log('🖌️ Brush tool activated');
+      
+      // VISUAL DEBUGGING: Mark the actual click position on canvas
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          // Draw a big red dot at the actual click position
+          ctx.fillStyle = "#ff0000";
+          ctx.beginPath();
+          ctx.arc(canvasPos.x, canvasPos.y, 8, 0, 2 * Math.PI);
+          ctx.fill();
+          
+          // Draw a big blue dot at where we think we clicked after conversion
+          const backConverted = worldToCanvas(pos.x, pos.y);
+          ctx.fillStyle = "#0000ff";
+          ctx.beginPath();
+          ctx.arc(backConverted.x, backConverted.y, 6, 0, 2 * Math.PI);
+          ctx.fill();
+          
+          // Draw a line between them to see the offset
+          ctx.strokeStyle = "#ffff00";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(canvasPos.x, canvasPos.y);
+          ctx.lineTo(backConverted.x, backConverted.y);
+          ctx.stroke();
+        }
+      }
       
       // Find existing editing structure or create one
       let editingStructure = structures.find(s => s.isEditing);
