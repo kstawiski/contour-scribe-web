@@ -652,7 +652,11 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   };
 
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
+    // SAFETY CHECK: Only allow drawing if mouse down was properly triggered
+    if (!isDrawing) {
+      console.log('🚫 Mouse move ignored - not in drawing mode');
+      return;
+    }
     
     const canvas = canvasRef.current;
     if (!canvas) return;
