@@ -289,6 +289,13 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     });
 
     // Render user-drawn contours - convert world coordinates back to canvas
+    console.log('🎨 Rendering contours debug:', {
+      totalContours: drawnContours.length,
+      contoursOnSlice: drawnContours.filter(c => c.sliceIndex === currentSlice).length,
+      currentSlice,
+      visibleStructures: structures.filter(s => s.visible).length
+    });
+    
     drawnContours
       .filter(contour => contour.sliceIndex === currentSlice)
       .forEach((contour, index) => {
