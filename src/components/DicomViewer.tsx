@@ -139,6 +139,9 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     const ctx = overlayCanvas.getContext('2d');
     if (!ctx) return;
     
+    // Don't clear and redraw during active drawing to prevent flickering
+    if (isDrawing) return;
+    
     // Clear overlay and redraw all saved contours for current slice
     ctx.clearRect(0, 0, 800, 800);
     
@@ -162,7 +165,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       });
       
     console.log('🎨 Overlay updated with', drawnContours.filter(c => c.sliceIndex === currentSlice).length, 'contours');
-  }, [drawnContours, currentSlice]);
+  }, [drawnContours, currentSlice, isDrawing]);
 
   // Canvas setup and rendering
   useEffect(() => {
