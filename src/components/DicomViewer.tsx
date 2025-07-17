@@ -227,19 +227,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       });
     }
 
-    // Debug overlay
-    ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
-    ctx.fillRect(10, 10, 220, 120);
-    
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "11px monospace";
-    ctx.fillText(`${currentSlice + 1}/${ctImages.length}`, 15, 25);
-    ctx.fillText(`WL:${windowLevel[0]} WW:${windowWidth[0]}`, 15, 40);
-    ctx.fillText(`${(zoom * 100).toFixed(0)}%`, 15, 55);
-    ctx.fillText(`Tool: ${drawing.currentTool}`, 15, 70);
-    ctx.fillText(`Drawing: ${drawing.isDrawing ? 'YES' : 'NO'}`, 15, 85);
-    ctx.fillText(`Structures: ${drawing.structures.length}`, 15, 100);
-    ctx.fillText(`Contours: ${drawing.getContoursForSlice(currentSlice).length}`, 15, 115);
     
   }, [currentSlice, rtStructures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawing]);
 
@@ -481,10 +468,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                 <RotateCcw className="w-4 h-4" />
                 Reset
               </Button>
-              <Button variant="outline" size="sm" onClick={interpolateSlices}>
-                <Copy className="w-4 h-4" />
-                Interpolate
-              </Button>
               <Button variant="medical" size="sm" onClick={handleDownload}>
                 <Download className="w-4 h-4" />
                 Export
@@ -593,6 +576,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                 onAddPoint={handleAddPoint}
                 onFinishDrawing={handleFinishDrawing}
                 onEraseAt={handleEraseAt}
+                onWheel={handleWheel}
               />
               
               <div className="absolute bottom-2 left-2 bg-black/80 text-white p-2 rounded text-xs">
@@ -728,7 +712,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           </div>
         </div>
 
-        <div className="flex-1 p-4 space-y-2 overflow-y-auto">
+        <div className="flex-1 p-4 space-y-2 overflow-y-auto max-h-96">
           {[...rtStructures, ...drawing.structures.filter(s => !s.id.startsWith('rt_'))].map((structure) => {
             const isActive = drawing.activeStructureId === structure.id;
             return (
@@ -740,12 +724,12 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                 onClick={() => startEditingRTStructure(structure.id)}
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
                     <div
-                      className="w-4 h-4 rounded border-2"
+                      className="w-4 h-4 rounded border-2 flex-shrink-0"
                       style={{ backgroundColor: structure.color }}
                     />
-                    <span className="text-sm font-medium text-foreground">
+                    <span className="text-sm font-medium text-foreground truncate">
                       {structure.name}
                     </span>
                   </div>
@@ -756,6 +740,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                       e.stopPropagation();
                       toggleRTStructureVisibility(structure.id);
                     }}
+                    className="flex-shrink-0"
                   >
                     {structure.visible ? (
                       <Eye className="w-4 h-4" />
@@ -774,6 +759,15 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
               </Card>
             );
           })}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={interpolateSlices}
+            className="w-full mt-4"
+          >
+            <Copy className="w-4 h-4 mr-2" />
+            Interpolate Slices
+          </Button>
         </div>
 
         <div className="p-4 border-t border-border bg-muted/30">
