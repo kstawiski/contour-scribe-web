@@ -497,10 +497,10 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     
   }, [currentSlice, structures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawnContours, currentPath, isDrawing]);
 
-  // Mouse wheel event for slice navigation
+  // Mouse wheel event for slice navigation - attach to interaction canvas since it's on top
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const interactionCanvas = (window as any).interactionCanvas;
+    if (!interactionCanvas) return;
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -519,10 +519,12 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       }
     };
 
-    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    interactionCanvas.addEventListener('wheel', handleWheel, { passive: false });
     
     return () => {
-      canvas.removeEventListener('wheel', handleWheel);
+      if (interactionCanvas) {
+        interactionCanvas.removeEventListener('wheel', handleWheel);
+      }
     };
   }, [activeTool, ctImages.length]);
 
