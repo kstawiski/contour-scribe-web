@@ -28,6 +28,7 @@ import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
 import { DrawingCanvas } from "@/components/DrawingCanvas";
 import { useDrawing, DrawingTool } from "@/hooks/useDrawing";
 import { BooleanOperation, Point2D } from "@/lib/contour-utils";
+import { DebugInfo } from "@/components/DebugInfo";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -454,6 +455,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
 
   return (
     <div className="min-h-screen bg-background flex animate-fade-in">
+      <DebugInfo />
       {/* Main Viewer */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
