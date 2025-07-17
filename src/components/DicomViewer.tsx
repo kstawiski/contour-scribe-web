@@ -335,6 +335,11 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   const handleDrawingToolChange = (tool: DrawingTool) => {
     drawing.setTool(tool);
     setViewerTool("select");
+    
+    // Auto-create a structure if none is active and we're starting to draw
+    if (!drawing.activeStructureId && (tool === "brush" || tool === "polygon")) {
+      addNewStructure();
+    }
   };
 
   const toggleRTStructureVisibility = (id: string) => {
