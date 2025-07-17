@@ -18,10 +18,16 @@ import {
   Eye,
   EyeOff,
   Plus,
-  ArrowLeft
+  ArrowLeft,
+  Scissors,
+  Copy,
+  RotateCw
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
+import { DrawingCanvas } from "@/components/DrawingCanvas";
+import { useDrawing, DrawingTool } from "@/hooks/useDrawing";
+import { BooleanOperation, Point2D } from "@/lib/contour-utils";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -29,7 +35,7 @@ interface DicomViewerProps {
   onBack?: () => void;
 }
 
-interface Structure {
+interface RTStructure {
   id: string;
   name: string;
   color: string;
@@ -37,58 +43,31 @@ interface Structure {
   isEditing: boolean;
 }
 
-type Tool = "select" | "pan" | "zoom" | "windowing" | "brush" | "eraser";
-
-interface DrawnContour {
-  points: { x: number; y: number }[];
-  sliceIndex: number;
-  structureId: string;
-}
+type ViewerTool = "select" | "pan" | "zoom" | "windowing";
 
 export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
 
+  // Drawing system
+  const drawing = useDrawing();
+
   // Viewer state
   const [currentSlice, setCurrentSlice] = useState(0);
-  const [activeTool, setActiveTool] = useState<Tool>("select");
+  const [viewerTool, setViewerTool] = useState<ViewerTool>("select");
   const [windowLevel, setWindowLevel] = useState([400]);
   const [windowWidth, setWindowWidth] = useState([800]);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   
-  // Drawing state with AGGRESSIVE debugging
-  const [drawnContours, setDrawnContours] = useState<DrawnContour[]>([]);
-  
-  const [isDrawing, setIsDrawingInternal] = useState(false);
-  const setIsDrawing = (value: boolean) => {
-    console.log('🔥 setIsDrawing called!', { 
-      from: isDrawing, 
-      to: value, 
-      stack: new Error().stack?.split('\n')[2] // Show where it was called from
-    });
-    setIsDrawingInternal(value);
-  };
-  
-  const [currentPath, setCurrentPathInternal] = useState<{ x: number; y: number; z?: number }[]>([]);
-  const setCurrentPath = (value: any) => {
-    const newPath = typeof value === 'function' ? value(currentPath) : value;
-    console.log('🔥 setCurrentPath called!', { 
-      fromLength: currentPath.length, 
-      toLength: Array.isArray(newPath) ? newPath.length : 'unknown',
-      stack: new Error().stack?.split('\n')[2] // Show where it was called from
-    });
-    setCurrentPathInternal(newPath);
-  };
-
-  // Structure state - only include RT structures, remove default mock structures
-  const [structures, setStructures] = useState<Structure[]>(() => {
-    const editableStructures: Structure[] = [];
+  // RT Structure state - only include RT structures
+  const [rtStructures, setRTStructures] = useState<RTStructure[]>(() => {
+    const structures: RTStructure[] = [];
     
     // Add RT structures if available
     if (rtStruct?.structures) {
       rtStruct.structures.forEach((rtStructure, index) => {
-        editableStructures.push({
+        structures.push({
           id: `rt_${index}`,
           name: rtStructure.name,
           color: `rgb(${Math.round(rtStructure.color[0])}, ${Math.round(rtStructure.color[1])}, ${Math.round(rtStructure.color[2])})`,
@@ -98,76 +77,24 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       });
     }
     
-    return editableStructures;
+    return structures;
   });
 
-  // Debug when drawing state changes - MOVED AFTER structures declaration
+  // Initialize drawing structures from RT structures
   useEffect(() => {
-    console.log('🔄 Drawing state changed:', { isDrawing, pathLength: currentPath.length });
-    
-    // EMERGENCY SAVE: If we have a path but drawing stops unexpectedly, save it
-    if (!isDrawing && currentPath.length > 5) {
-      console.log('🆘 EMERGENCY SAVE: Drawing stopped with unsaved path!');
-      const editingStructure = structures.find(s => s.isEditing);
-      
-      if (editingStructure) {
-        const newContour: DrawnContour = {
-          points: currentPath.map(p => ({ x: p.x, y: p.y })),
-          sliceIndex: currentSlice,
-          structureId: editingStructure.id
-        };
-        
-        setDrawnContours(prev => {
-          const updated = [...prev, newContour];
-          console.log('🆘 Emergency saved! Total contours now:', updated.length);
-          return updated;
+    if (drawing.structures.length === 0 && rtStruct?.structures) {
+      rtStruct.structures.forEach((rtStructure, index) => {
+        drawing.addStructure({
+          id: `rt_${index}`,
+          name: rtStructure.name,
+          color: `rgb(${Math.round(rtStructure.color[0])}, ${Math.round(rtStructure.color[1])}, ${Math.round(rtStructure.color[2])})`,
+          visible: true
         });
-        
-        toast({
-          title: "Emergency save!",
-          description: `Saved ${currentPath.length} points`,
-        });
-      }
-    }
-  }, [isDrawing, currentPath.length, structures, currentSlice]);
-
-  // Render saved contours on the overlay canvas so they persist
-  useEffect(() => {
-    const overlayCanvas = (window as any).overlayCanvas;
-    if (!overlayCanvas) return;
-    
-    const ctx = overlayCanvas.getContext('2d');
-    if (!ctx) return;
-    
-    // Don't clear and redraw during active drawing to prevent flickering
-    if (isDrawing) return;
-    
-    // Clear overlay and redraw all saved contours for current slice
-    ctx.clearRect(0, 0, 800, 800);
-    
-    drawnContours
-      .filter(contour => contour.sliceIndex === currentSlice)
-      .forEach((contour) => {
-        if (contour.points.length > 1) {
-          ctx.strokeStyle = '#ff0000';
-          ctx.lineWidth = 3;
-          ctx.lineCap = 'round';
-          ctx.lineJoin = 'round';
-          
-          ctx.beginPath();
-          ctx.moveTo(contour.points[0].x, contour.points[0].y);
-          
-          contour.points.slice(1).forEach(point => {
-            ctx.lineTo(point.x, point.y);
-          });
-          ctx.stroke();
-        }
       });
-      
-    console.log('🎨 Overlay updated with', drawnContours.filter(c => c.sliceIndex === currentSlice).length, 'contours');
-  }, [drawnContours, currentSlice, isDrawing]);
+    }
+  }, [rtStruct, drawing]);
 
-  // Canvas setup and rendering
+  // Canvas setup and DICOM rendering
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || ctImages.length === 0) return;
@@ -178,32 +105,22 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     const currentImage = ctImages[currentSlice];
     if (!currentImage) return;
 
-    // Set canvas to fill available space - make it larger and responsive
-    const canvasSize = 800; // Much larger canvas
+    // Set canvas size
+    const canvasSize = 800;
     canvas.width = canvasSize;
     canvas.height = canvasSize;
 
-    // Clear canvas with black background (standard for medical imaging)
+    // Clear canvas with black background
     ctx.fillStyle = "#000000";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Set cursor style based on drawing state
-    if (isDrawing || activeTool === "brush") {
-      canvas.style.cursor = "crosshair";
-    } else {
-      canvas.style.cursor = "default";
-    }
-
-    // Calculate image positioning and scaling to fill more of the canvas
+    // Calculate image positioning and scaling
     const imageAspect = currentImage.width / currentImage.height;
-    const canvasAspect = 1; // Square canvas
-    
     let drawWidth = currentImage.width;
     let drawHeight = currentImage.height;
     
-    // Scale to fit canvas while maintaining aspect ratio - use more space
-    const maxSize = canvasSize * 0.95; // Use 95% of canvas instead of 90%
-    if (imageAspect > canvasAspect) {
+    const maxSize = canvasSize * 0.95;
+    if (imageAspect > 1) {
       drawWidth = maxSize;
       drawHeight = drawWidth / imageAspect;
     } else {
@@ -211,25 +128,13 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       drawWidth = drawHeight * imageAspect;
     }
     
-    // Apply zoom
     drawWidth *= zoom;
     drawHeight *= zoom;
     
-    // Center the image with pan offset
     const imageX = (canvasSize - drawWidth) / 2 + pan.x;
     const imageY = (canvasSize - drawHeight) / 2 + pan.y;
 
-    // Store image bounds for coordinate transformation
-    const imageBounds = {
-      x: imageX,
-      y: imageY,
-      width: drawWidth,
-      height: drawHeight,
-      scaleX: drawWidth / currentImage.width,
-      scaleY: drawHeight / currentImage.height
-    };
-
-    // Render the actual DICOM image
+    // Render the DICOM image
     try {
       const tempCanvas = document.createElement('canvas');
       const tempCtx = tempCanvas.getContext('2d');
@@ -242,97 +147,64 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           windowWidth[0]
         );
         
-        // Draw the DICOM image at calculated position
         ctx.drawImage(tempCanvas, imageX, imageY, drawWidth, drawHeight);
       }
     } catch (error) {
       console.error("Error rendering DICOM image:", error);
       
-      // Fallback rendering
       ctx.fillStyle = "#333333";
       ctx.fillRect(imageX, imageY, drawWidth, drawHeight);
-      
-      // Add a simple cross-hair in center for reference
-      ctx.strokeStyle = "#666666";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(imageX + drawWidth/2 - 20, imageY + drawHeight/2);
-      ctx.lineTo(imageX + drawWidth/2 + 20, imageY + drawHeight/2);
-      ctx.moveTo(imageX + drawWidth/2, imageY + drawHeight/2 - 20);
-      ctx.lineTo(imageX + drawWidth/2, imageY + drawHeight/2 + 20);
-      ctx.stroke();
     }
 
-    // Simplified coordinate transformation - no offset issues
-    const worldToCanvas = (worldX: number, worldY: number, worldZ?: number) => {
+    // Coordinate transformation functions
+    const worldToCanvas = (worldX: number, worldY: number) => {
       const imagePosition = currentImage.imagePosition || [0, 0, 0];
       const pixelSpacing = currentImage.pixelSpacing || [1, 1];
       
-      // Convert world coordinates to image pixel coordinates
       const pixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
       const pixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
       
-      // Convert pixel coordinates to canvas coordinates with proper scaling
-      const canvasX = imageX + (pixelX * imageBounds.scaleX);
-      const canvasY = imageY + (pixelY * imageBounds.scaleY);
+      const scaleX = drawWidth / currentImage.width;
+      const scaleY = drawHeight / currentImage.height;
       
-      return { x: canvasX, y: canvasY };
+      return {
+        x: imageX + (pixelX * scaleX),
+        y: imageY + (pixelY * scaleY)
+      };
     };
 
-    // Render RT structure contours with debugging
+    // Render RT structure contours
     if (rtStruct?.structures) {
       rtStruct.structures.forEach((rtStructure, structIndex) => {
-        const structure = structures.find(s => s.id === `rt_${structIndex}`);
+        const structure = rtStructures.find(s => s.id === `rt_${structIndex}`);
         if (!structure?.visible) return;
         
         ctx.strokeStyle = structure.color;
         ctx.lineWidth = 2;
         ctx.setLineDash(structure.isEditing ? [5, 5] : []);
         
-        // Get current slice Z position
         const currentSliceZ = currentImage.sliceLocation;
         
-        console.log(`Slice ${currentSlice}: Z=${currentSliceZ}, Structure: ${rtStructure.name}`);
-        
-        rtStructure.contours.forEach((contour, contourIndex) => {
+        rtStructure.contours.forEach((contour) => {
           if (contour.points.length === 0) return;
           
-          // Check if this contour belongs to the current slice
-          const contourZ = contour.points[0][2]; // Z coordinate from first point
+          const contourZ = contour.points[0][2];
           let shouldShowContour = false;
           
           if (currentSliceZ !== undefined) {
-            // Use slice thickness for tolerance, or default to 1mm
             const tolerance = (currentImage.sliceThickness || 1.0) / 2;
             shouldShowContour = Math.abs(contourZ - currentSliceZ) <= tolerance;
           } else {
-            // Fallback: match by slice index
             shouldShowContour = contour.sliceIndex === currentSlice;
           }
           
           if (shouldShowContour) {
-            console.log(`Drawing contour ${contourIndex} for ${rtStructure.name}:`, {
-              contourZ,
-              currentSliceZ,
-              pointCount: contour.points.length,
-              firstPoint: contour.points[0],
-              lastPoint: contour.points[contour.points.length - 1]
-            });
-            
             ctx.beginPath();
             let validPoints = 0;
             
-            contour.points.forEach((point, index) => {
-              const canvasPoint = worldToCanvas(point[0], point[1], point[2]);
+            contour.points.forEach((point) => {
+              const canvasPoint = worldToCanvas(point[0], point[1]);
               
-              // Debug: draw point markers for first contour
-              if (contourIndex === 0 && index < 5) {
-                ctx.fillStyle = 'yellow';
-                ctx.fillRect(canvasPoint.x - 2, canvasPoint.y - 2, 4, 4);
-                ctx.fillStyle = structure.color;
-              }
-              
-              // Only draw if the point is within reasonable bounds
               if (canvasPoint.x >= imageX - 50 && canvasPoint.x <= imageX + drawWidth + 50 &&
                   canvasPoint.y >= imageY - 50 && canvasPoint.y <= imageY + drawHeight + 50) {
                 if (validPoints === 0) {
@@ -355,354 +227,35 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       });
     }
 
-    // Remove the mock circular structures - they were confusing
-    // Only render user-created structures when they're actually being edited
-    structures.forEach((structure) => {
-      if (!structure.visible || structure.id.startsWith('rt_') || !structure.isEditing) return;
-      
-      ctx.strokeStyle = structure.color;
-      ctx.lineWidth = 3;
-      ctx.setLineDash([5, 5]);
-      
-      // Show editing indicator in center
-      const centerX = imageX + drawWidth / 2;
-      const centerY = imageY + drawHeight / 2;
-      
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
-      ctx.stroke();
-      
-      // Add text indicating editing mode
-      ctx.fillStyle = structure.color;
-      ctx.font = "14px Arial";
-      ctx.fillText("Editing: " + structure.name, centerX + 15, centerY);
-      
-      ctx.setLineDash([]);
-    });
-
-    // Render user-drawn contours with proper coordinate conversion like DICOM contours
-    console.log('🎨 Rendering contours debug:', {
-      totalContours: drawnContours.length,
-      contoursOnSlice: drawnContours.filter(c => c.sliceIndex === currentSlice).length,
-      currentSlice,
-      visibleStructures: structures.filter(s => s.visible).length
-    });
-    
-    drawnContours
-      .filter(contour => contour.sliceIndex === currentSlice)
-      .forEach((contour, index) => {
-        const structure = structures.find(s => s.id === contour.structureId);
-        if (!structure?.visible) return;
-        
-        ctx.strokeStyle = structure.color || '#ff0000';
-        ctx.lineWidth = 3;
-        ctx.setLineDash(structure.isEditing ? [5, 5] : []);
-        
-        if (contour.points.length > 1) {
-          ctx.beginPath();
-          // Convert world coordinates to canvas coordinates for rendering (like DICOM contours)
-          const firstCanvasPoint = worldToCanvas(contour.points[0].x, contour.points[0].y);
-          ctx.moveTo(firstCanvasPoint.x, firstCanvasPoint.y);
-          
-          contour.points.slice(1).forEach(point => {
-            const canvasPoint = worldToCanvas(point.x, point.y);
-            ctx.lineTo(canvasPoint.x, canvasPoint.y);
-          });
-          ctx.stroke();
-        }
-        
-        ctx.setLineDash([]);
-      });
-    
-    // Render current drawing path (live preview) - ALWAYS show during drawing
-    if (isDrawing && currentPath.length > 0) {
-      ctx.strokeStyle = '#00ff00'; // Bright green for current drawing
-      ctx.lineWidth = 3;
-      ctx.setLineDash([]);
-      
-      ctx.beginPath();
-      if (currentPath.length === 1) {
-        // Show single point
-        const canvasPoint = worldToCanvas(currentPath[0].x, currentPath[0].y);
-        ctx.arc(canvasPoint.x, canvasPoint.y, 2, 0, 2 * Math.PI);
-        ctx.fill();
-      } else {
-        // Show path
-        const firstCanvasPoint = worldToCanvas(currentPath[0].x, currentPath[0].y);
-        ctx.moveTo(firstCanvasPoint.x, firstCanvasPoint.y);
-        
-        currentPath.slice(1).forEach(point => {
-          const canvasPoint = worldToCanvas(point.x, point.y);
-          ctx.lineTo(canvasPoint.x, canvasPoint.y);
-        });
-        ctx.stroke();
-      }
-    }
-
-    // Enhanced debug overlay with coordinate info
+    // Debug overlay
     ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
-    ctx.fillRect(10, 10, 220, 210); // Larger debug area
+    ctx.fillRect(10, 10, 220, 120);
     
     ctx.fillStyle = "#ffffff";
     ctx.font = "11px monospace";
     ctx.fillText(`${currentSlice + 1}/${ctImages.length}`, 15, 25);
     ctx.fillText(`WL:${windowLevel[0]} WW:${windowWidth[0]}`, 15, 40);
     ctx.fillText(`${(zoom * 100).toFixed(0)}%`, 15, 55);
+    ctx.fillText(`Tool: ${drawing.currentTool}`, 15, 70);
+    ctx.fillText(`Drawing: ${drawing.isDrawing ? 'YES' : 'NO'}`, 15, 85);
+    ctx.fillText(`Structures: ${drawing.structures.length}`, 15, 100);
+    ctx.fillText(`Contours: ${drawing.getContoursForSlice(currentSlice).length}`, 15, 115);
     
-    if (currentImage.sliceLocation !== undefined) {
-      ctx.fillText(`Z: ${currentImage.sliceLocation.toFixed(1)}mm`, 15, 70);
-    }
-    if (currentImage.sliceThickness !== undefined) {
-      ctx.fillText(`Thick: ${currentImage.sliceThickness.toFixed(1)}mm`, 15, 85);
-    }
-    
-    // Show number of visible contours on this slice
-    let contoursOnSlice = 0;
-    if (rtStruct?.structures) {
-      const tolerance = (currentImage.sliceThickness || 1.0) / 2;
-      rtStruct.structures.forEach(structure => {
-        structure.contours.forEach(contour => {
-          if (contour.points.length > 0) {
-            const contourZ = contour.points[0][2];
-            const currentSliceZ = currentImage.sliceLocation;
-            if (currentSliceZ !== undefined && Math.abs(contourZ - currentSliceZ) <= tolerance) {
-              contoursOnSlice++;
-            }
-          }
-        });
-      });
-    }
-    
-    // COMPREHENSIVE DEBUG INFO
-    const contoursOnCurrentSlice = drawnContours.filter(c => c.sliceIndex === currentSlice).length;
-    ctx.fillText(`Drawn: ${contoursOnCurrentSlice}`, 15, 115);
-    ctx.fillText(`Total drawn: ${drawnContours.length}`, 15, 130);
-    ctx.fillText(`Tool: ${activeTool}`, 15, 145);
-    ctx.fillText(`Drawing: ${isDrawing ? 'YES' : 'NO'}`, 15, 160);
-    ctx.fillText(`Path pts: ${currentPath.length}`, 15, 175);
-    ctx.fillText(`Structures: ${structures.length}`, 15, 190);
-    
-    const editingStructure = structures.find(s => s.isEditing);
-    if (editingStructure) {
-      ctx.fillText(`Editing: ${editingStructure.name}`, 15, 205);
-    }
-    // Add center crosshair for reference - image center
-    ctx.strokeStyle = "#00ff00";
-    ctx.lineWidth = 1;
-    ctx.setLineDash([2, 2]);
-    ctx.beginPath();
-    ctx.moveTo(imageX + drawWidth/2 - 10, imageY + drawHeight/2);
-    ctx.lineTo(imageX + drawWidth/2 + 10, imageY + drawHeight/2);
-    ctx.moveTo(imageX + drawWidth/2, imageY + drawHeight/2 - 10);
-    ctx.lineTo(imageX + drawWidth/2, imageY + drawHeight/2 + 10);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    
-  }, [currentSlice, structures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawnContours, currentPath, isDrawing]);
+  }, [currentSlice, rtStructures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawing]);
 
-  // Mouse wheel event for slice navigation - attach to interaction canvas since it's on top
-  useEffect(() => {
-    const interactionCanvas = (window as any).interactionCanvas;
-    if (!interactionCanvas) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      
-      // Only navigate slices if we're not in zoom mode
-      if (activeTool !== "zoom") {
-        const delta = e.deltaY > 0 ? 1 : -1;
-        setCurrentSlice(prev => {
-          const newSlice = prev + delta;
-          return Math.max(0, Math.min(ctImages.length - 1, newSlice));
-        });
-      } else {
-        // Zoom mode: use wheel for zooming
-        const delta = e.deltaY > 0 ? 0.9 : 1.1;
-        setZoom(prev => Math.max(0.1, Math.min(5, prev * delta)));
-      }
-    };
-
-    interactionCanvas.addEventListener('wheel', handleWheel, { passive: false });
-    
-    return () => {
-      if (interactionCanvas) {
-        interactionCanvas.removeEventListener('wheel', handleWheel);
-      }
-    };
-  }, [activeTool, ctImages.length]);
-
-  // Helper function to convert canvas coordinates to world coordinates  
-  const canvasToWorld = (canvasX: number, canvasY: number) => {
-    const currentImage = ctImages[currentSlice];
-    if (!currentImage) return { x: 0, y: 0, z: 0 };
-    
-    const canvasSize = 800;
-    const imageAspect = currentImage.width / currentImage.height;
-    const canvasAspect = 1;
-    
-    let drawWidth = currentImage.width;
-    let drawHeight = currentImage.height;
-    
-    const maxSize = canvasSize * 0.95;
-    if (imageAspect > canvasAspect) {
-      drawWidth = maxSize;
-      drawHeight = drawWidth / imageAspect;
-    } else {
-      drawHeight = maxSize;
-      drawWidth = drawHeight * imageAspect;
-    }
-    
-    drawWidth *= zoom;
-    drawHeight *= zoom;
-    
-    const imageX = (canvasSize - drawWidth) / 2 + pan.x;
-    const imageY = (canvasSize - drawHeight) / 2 + pan.y;
-    
-    const imageBounds = {
-      x: imageX,
-      y: imageY,
-      width: drawWidth,
-      height: drawHeight,
-      scaleX: drawWidth / currentImage.width,
-      scaleY: drawHeight / currentImage.height
-    };
-    
-    const imagePosition = currentImage.imagePosition || [0, 0, currentImage.imagePosition?.[2] || 0];
-    const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-    
-    // Convert canvas position to image pixel coordinates
-    const pixelX = (canvasX - imageBounds.x) / imageBounds.scaleX;
-    const pixelY = (canvasY - imageBounds.y) / imageBounds.scaleY;
-    
-    // Convert to world coordinates
-    const worldX = imagePosition[0] + (pixelX * pixelSpacing[0]);
-    const worldY = imagePosition[1] + (pixelY * pixelSpacing[1]);
-    const worldZ = imagePosition[2];
-    
-    return { x: worldX, y: worldY, z: worldZ };
-  };
-
-  // Clean drawing system using the overlay canvas
-  useEffect(() => {
-    const interactionCanvas = (window as any).interactionCanvas;
-    const overlayCanvas = (window as any).overlayCanvas;
-    
-    if (!interactionCanvas || !overlayCanvas) return;
-
-    const handlePointerDown = (e: PointerEvent) => {
-      if (activeTool !== "brush") return;
-      
-      e.preventDefault();
-      interactionCanvas.setPointerCapture(e.pointerId);
-      
-      const rect = interactionCanvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      
-      // Scale coordinates to canvas size
-      const scaleX = 800 / rect.width;
-      const scaleY = 800 / rect.height;
-      const canvasX = x * scaleX;
-      const canvasY = y * scaleY;
-      
-      console.log('🎯 Starting draw on overlay:', { canvasX, canvasY });
-      
-      setIsDrawing(true);
-      setCurrentPath([{ x: canvasX, y: canvasY }]);
-    };
-
-    const handlePointerMove = (e: PointerEvent) => {
-      if (!isDrawing || activeTool !== "brush") return;
-      
-      e.preventDefault();
-      const rect = interactionCanvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      
-      // Scale coordinates to canvas size
-      const scaleX = 800 / rect.width;
-      const scaleY = 800 / rect.height;
-      const canvasX = x * scaleX;
-      const canvasY = y * scaleY;
-      
-      setCurrentPath(prev => [...prev, { x: canvasX, y: canvasY }]);
-      
-      // Draw directly on overlay canvas for immediate feedback
-      const ctx = overlayCanvas.getContext('2d');
-      if (ctx && currentPath.length > 0) {
-        const lastPoint = currentPath[currentPath.length - 1];
-        ctx.strokeStyle = '#ff0000';
-        ctx.lineWidth = 3;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(lastPoint.x, lastPoint.y);
-        ctx.lineTo(canvasX, canvasY);
-        ctx.stroke();
-      }
-    };
-
-    const handlePointerUp = (e: PointerEvent) => {
-      if (!isDrawing) return;
-      
-      e.preventDefault();
-      interactionCanvas.releasePointerCapture(e.pointerId);
-      
-      console.log('🎯 Finished drawing - saving contour');
-      
-      // Save the drawing immediately
-      if (currentPath.length > 1) {
-        const newContour: DrawnContour = {
-          points: currentPath.map(p => ({ x: p.x, y: p.y })),
-          sliceIndex: currentSlice,
-          structureId: 'user_drawn_overlay'
-        };
-        
-        setDrawnContours(prev => {
-          const updated = [...prev, newContour];
-          console.log('✅ Overlay contour saved! Total:', updated.length);
-          return updated;
-        });
-        
-        toast({
-          title: "Drawing saved!",
-          description: `${currentPath.length} points on slice ${currentSlice + 1}`,
-        });
-      }
-      
-      setIsDrawing(false);
-      setCurrentPath([]);
-    };
-
-    interactionCanvas.addEventListener('pointerdown', handlePointerDown);
-    interactionCanvas.addEventListener('pointermove', handlePointerMove);
-    interactionCanvas.addEventListener('pointerup', handlePointerUp);
-    interactionCanvas.addEventListener('pointercancel', handlePointerUp);
-
-    return () => {
-      if (interactionCanvas) {
-        interactionCanvas.removeEventListener('pointerdown', handlePointerDown);
-        interactionCanvas.removeEventListener('pointermove', handlePointerMove);
-        interactionCanvas.removeEventListener('pointerup', handlePointerUp);
-        interactionCanvas.removeEventListener('pointercancel', handlePointerUp);
-      }
-    };
-  }, [activeTool, isDrawing, currentPath, currentSlice]);
-
-
-  // Helper function to convert world coordinates back to canvas coordinates
-  const worldToCanvas = (worldX: number, worldY: number) => {
+  // Convert canvas coordinates to world coordinates for drawing
+  const canvasToWorld = (canvasX: number, canvasY: number): Point2D => {
     const currentImage = ctImages[currentSlice];
     if (!currentImage) return { x: 0, y: 0 };
     
     const canvasSize = 800;
     const imageAspect = currentImage.width / currentImage.height;
-    const canvasAspect = 1;
     
     let drawWidth = currentImage.width;
     let drawHeight = currentImage.height;
     
     const maxSize = canvasSize * 0.95;
-    if (imageAspect > canvasAspect) {
+    if (imageAspect > 1) {
       drawWidth = maxSize;
       drawHeight = drawWidth / imageAspect;
     } else {
@@ -716,72 +269,108 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     const imageX = (canvasSize - drawWidth) / 2 + pan.x;
     const imageY = (canvasSize - drawHeight) / 2 + pan.y;
     
-    const imageBounds = {
-      x: imageX,
-      y: imageY,
-      width: drawWidth,
-      height: drawHeight,
-      scaleX: drawWidth / currentImage.width,
-      scaleY: drawHeight / currentImage.height
-    };
-    
     const imagePosition = currentImage.imagePosition || [0, 0, 0];
     const pixelSpacing = currentImage.pixelSpacing || [1, 1];
     
-    // Convert world coordinates to image pixel coordinates
-    const pixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
-    const pixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
+    const scaleX = drawWidth / currentImage.width;
+    const scaleY = drawHeight / currentImage.height;
     
-    // Convert pixel coordinates to canvas coordinates with proper scaling
-    const canvasX = imageX + (pixelX * imageBounds.scaleX);
-    const canvasY = imageY + (pixelY * imageBounds.scaleY);
+    const pixelX = (canvasX - imageX) / scaleX;
+    const pixelY = (canvasY - imageY) / scaleY;
     
-    return { x: canvasX, y: canvasY };
+    return {
+      x: imagePosition[0] + (pixelX * pixelSpacing[0]),
+      y: imagePosition[1] + (pixelY * pixelSpacing[1])
+    };
   };
 
-  // Add click test handler
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    console.log('🎯 BASIC CLICK TEST WORKS!', e.clientX, e.clientY);
-  };
-
-  const handleToolChange = (tool: Tool) => {
-    setActiveTool(tool);
-    // Reset editing state when changing tools
-    if (tool !== "brush" && tool !== "eraser") {
-      setStructures(prev => prev.map(s => ({ ...s, isEditing: false })));
+  // Handle wheel events for slice navigation
+  const handleWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    
+    if (viewerTool !== "zoom") {
+      const delta = e.deltaY > 0 ? 1 : -1;
+      setCurrentSlice(prev => {
+        const newSlice = prev + delta;
+        return Math.max(0, Math.min(ctImages.length - 1, newSlice));
+      });
+    } else {
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      setZoom(prev => Math.max(0.1, Math.min(5, prev * delta)));
     }
   };
 
-  const toggleStructureVisibility = (id: string) => {
-    setStructures(prev => 
-      prev.map(s => s.id === id ? { ...s, visible: !s.visible } : s)
-    );
+  // Drawing event handlers
+  const handleStartDrawing = (point: Point2D) => {
+    const worldPoint = canvasToWorld(point.x, point.y);
+    drawing.startDrawing(worldPoint);
   };
 
-  const startEditingStructure = (id: string) => {
-    setStructures(prev => 
+  const handleAddPoint = (point: Point2D) => {
+    const worldPoint = canvasToWorld(point.x, point.y);
+    drawing.addPoint(worldPoint);
+  };
+
+  const handleFinishDrawing = () => {
+    drawing.finishDrawing(currentSlice);
+    toast({
+      title: "Contour saved",
+      description: "Drawing has been added to the active structure",
+    });
+  };
+
+  const handleEraseAt = (point: Point2D) => {
+    const worldPoint = canvasToWorld(point.x, point.y);
+    drawing.eraseAt(worldPoint, currentSlice);
+  };
+
+  // Tool change handlers
+  const handleViewerToolChange = (tool: ViewerTool) => {
+    setViewerTool(tool);
+    if (tool !== "select") {
+      drawing.setTool("select");
+    }
+  };
+
+  const handleDrawingToolChange = (tool: DrawingTool) => {
+    drawing.setTool(tool);
+    setViewerTool("select");
+  };
+
+  const toggleRTStructureVisibility = (id: string) => {
+    setRTStructures(prev => 
+      prev.map(s => s.id === id ? { ...s, visible: !s.visible } : s)
+    );
+    drawing.toggleStructureVisibility(id);
+  };
+
+  const startEditingRTStructure = (id: string) => {
+    setRTStructures(prev => 
       prev.map(s => ({ ...s, isEditing: s.id === id ? !s.isEditing : false }))
     );
-    if (activeTool === "select") {
-      setActiveTool("brush");
+    drawing.setActiveStructure(id);
+    if (drawing.currentTool === "select") {
+      drawing.setTool("brush");
     }
   };
 
   const addNewStructure = () => {
     const newId = `edit_${Date.now()}`;
     const colors = ["#ff8844", "#8844ff", "#44ff88", "#ff4488", "#88ff44"];
-    const color = colors[structures.filter(s => s.id.startsWith('edit_')).length % colors.length];
+    const color = colors[drawing.structures.filter(s => s.id.startsWith('edit_')).length % colors.length];
     
-    const newStructure: Structure = {
+    const newStructure = {
       id: newId,
-      name: `New_Structure_${structures.length + 1}`,
+      name: `New_Structure_${drawing.structures.length + 1}`,
       color,
-      visible: true,
-      isEditing: true
+      visible: true
     };
     
-    setStructures(prev => [...prev, newStructure]);
-    setActiveTool("brush");
+    drawing.addStructure(newStructure);
+    drawing.setActiveStructure(newId);
+    drawing.setTool("brush");
+    
+    setRTStructures(prev => [...prev, { ...newStructure, isEditing: true }]);
     
     toast({
       title: "New structure created",
@@ -795,7 +384,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       description: "Generating DICOM RT Structure file...",
     });
     
-    // Mock download - in real implementation, this would generate a proper DICOM file
     setTimeout(() => {
       toast({
         title: "Export complete",
@@ -813,6 +401,55 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       title: "View reset",
       description: "Returned to default view settings",
     });
+  };
+
+  const interpolateSlices = () => {
+    if (drawing.activeStructureId) {
+      const activeStructure = drawing.structures.find(s => s.id === drawing.activeStructureId);
+      if (activeStructure && activeStructure.contours.length >= 2) {
+        // Find slices with contours
+        const slicesWithContours = [...new Set(activeStructure.contours.map(c => c.sliceIndex))].sort((a, b) => a - b);
+        
+        if (slicesWithContours.length >= 2) {
+          const startSlice = slicesWithContours[0];
+          const endSlice = slicesWithContours[slicesWithContours.length - 1];
+          const targetSlices = [];
+          
+          for (let i = startSlice + 1; i < endSlice; i++) {
+            if (!slicesWithContours.includes(i)) {
+              targetSlices.push(i);
+            }
+          }
+          
+          if (targetSlices.length > 0) {
+            // Simplified interpolation - just copy the first contour to all target slices
+            const firstContour = activeStructure.contours[0];
+            targetSlices.forEach(slice => {
+              const interpolatedContour = {
+                id: `interpolated_${Date.now()}_${slice}`,
+                points: firstContour.points,
+                sliceIndex: slice,
+                structureId: drawing.activeStructureId!,
+                isClosed: true,
+                color: firstContour.color
+              };
+              
+              drawing.addStructure({
+                id: drawing.activeStructureId!,
+                name: activeStructure.name,
+                color: activeStructure.color,
+                visible: true
+              });
+            });
+            
+            toast({
+              title: "Interpolation complete",
+              description: `Added contours to ${targetSlices.length} slices`,
+            });
+          }
+        }
+      }
+    }
   };
 
   return (
@@ -839,6 +476,10 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                 <RotateCcw className="w-4 h-4" />
                 Reset
               </Button>
+              <Button variant="outline" size="sm" onClick={interpolateSlices}>
+                <Copy className="w-4 h-4" />
+                Interpolate
+              </Button>
               <Button variant="medical" size="sm" onClick={handleDownload}>
                 <Download className="w-4 h-4" />
                 Export
@@ -852,30 +493,30 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1 border border-border rounded-md p-1">
               <Button
-                variant={activeTool === "select" ? "default" : "ghost"}
+                variant={viewerTool === "select" ? "default" : "ghost"}
                 size="sm"
-                onClick={() => handleToolChange("select")}
+                onClick={() => handleViewerToolChange("select")}
               >
                 <MousePointer className="w-4 h-4" />
               </Button>
               <Button
-                variant={activeTool === "pan" ? "default" : "ghost"}
+                variant={viewerTool === "pan" ? "default" : "ghost"}
                 size="sm"
-                onClick={() => handleToolChange("pan")}
+                onClick={() => handleViewerToolChange("pan")}
               >
                 <Move className="w-4 h-4" />
               </Button>
               <Button
-                variant={activeTool === "zoom" ? "default" : "ghost"}
+                variant={viewerTool === "zoom" ? "default" : "ghost"}
                 size="sm"
-                onClick={() => handleToolChange("zoom")}
+                onClick={() => handleViewerToolChange("zoom")}
               >
                 <ZoomIn className="w-4 h-4" />
               </Button>
               <Button
-                variant={activeTool === "windowing" ? "default" : "ghost"}
+                variant={viewerTool === "windowing" ? "default" : "ghost"}
                 size="sm"
-                onClick={() => handleToolChange("windowing")}
+                onClick={() => handleViewerToolChange("windowing")}
               >
                 <Settings className="w-4 h-4" />
               </Button>
@@ -885,18 +526,25 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
 
             <div className="flex items-center gap-1 border border-border rounded-md p-1">
               <Button
-                variant={activeTool === "brush" ? "medical" : "ghost"}
+                variant={drawing.currentTool === "brush" ? "medical" : "ghost"}
                 size="sm"
-                onClick={() => handleToolChange("brush")}
+                onClick={() => handleDrawingToolChange("brush")}
               >
                 <Paintbrush className="w-4 h-4" />
               </Button>
               <Button
-                variant={activeTool === "eraser" ? "warning" : "ghost"}
+                variant={drawing.currentTool === "eraser" ? "destructive" : "ghost"}
                 size="sm"
-                onClick={() => handleToolChange("eraser")}
+                onClick={() => handleDrawingToolChange("eraser")}
               >
                 <Eraser className="w-4 h-4" />
+              </Button>
+              <Button
+                variant={drawing.currentTool === "polygon" ? "medical" : "ghost"}
+                size="sm"
+                onClick={() => handleDrawingToolChange("polygon")}
+              >
+                <Scissors className="w-4 h-4" />
               </Button>
             </div>
 
@@ -905,7 +553,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">Tool:</span>
               <Badge variant="secondary" className="capitalize">
-                {activeTool}
+                {drawing.currentTool}
               </Badge>
             </div>
           </div>
@@ -913,65 +561,43 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
 
         {/* Viewer Canvas */}
         <div className="flex-1 flex">
-          {/* Canvas Container - Full screen stretch */}
           <div className="flex-1 bg-black flex items-center justify-center p-4">
             <div className="relative w-full h-full flex items-center justify-center">
               <canvas
                 ref={canvasRef}
-                className="border-4 border-red-500 shadow-elevation cursor-crosshair"
+                className="shadow-elevation"
                 style={{
                   imageRendering: "pixelated",
                   width: "min(calc(100vh - 200px), calc(100vw - 700px))",
                   height: "min(calc(100vh - 200px), calc(100vw - 700px))",
-                  touchAction: "none",
-                  userSelect: "none",
-                  backgroundColor: "rgba(255,0,0,0.1)" // Red tint to see canvas bounds
+                  border: "2px solid #333"
                 }}
               />
               
-              {/* SEPARATE OVERLAY CANVAS FOR USER DRAWINGS - Never gets cleared */}
-              <canvas
-                ref={(canvas) => {
-                  if (canvas) {
-                    // Initialize overlay canvas with same dimensions
-                    canvas.width = 800;
-                    canvas.height = 800;
-                    // Store reference for drawing operations
-                    (window as any).overlayCanvas = canvas;
-                  }
-                }}
-                className="absolute inset-0 pointer-events-none"
-                style={{
-                  width: "min(calc(100vh - 200px), calc(100vw - 700px))",
-                  height: "min(calc(100vh - 200px), calc(100vw - 700px))",
-                }}
+              <DrawingCanvas
+                width={800}
+                height={800}
+                contours={drawing.getContoursForSlice(currentSlice)}
+                currentPath={drawing.currentPath}
+                currentTool={drawing.currentTool}
+                isDrawing={drawing.isDrawing}
+                brushSize={drawing.brushSize}
+                eraserSize={drawing.eraserSize}
+                onStartDrawing={handleStartDrawing}
+                onAddPoint={handleAddPoint}
+                onFinishDrawing={handleFinishDrawing}
+                onEraseAt={handleEraseAt}
+                onWheel={handleWheel}
               />
               
-              {/* TRANSPARENT INTERACTION CANVAS FOR DRAWING EVENTS */}
-              <canvas
-                ref={(canvas) => {
-                  if (canvas) {
-                    canvas.width = 800;
-                    canvas.height = 800;
-                    (window as any).interactionCanvas = canvas;
-                  }
-                }}
-                className="absolute inset-0"
-                style={{
-                  width: "min(calc(100vh - 200px), calc(100vw - 700px))",
-                  height: "min(calc(100vh - 200px), calc(100vw - 700px))",
-                  backgroundColor: "transparent",
-                }}
-              />
-              
-              {/* Tool instructions overlay */}
               <div className="absolute bottom-2 left-2 bg-black/80 text-white p-2 rounded text-xs">
-                {activeTool === "select" && "Mouse wheel: Navigate slices"}
-                {activeTool === "pan" && "Drag: Pan image | Wheel: Navigate slices"}
-                {activeTool === "zoom" && "Wheel: Zoom in/out | Drag: Pan"}
-                {activeTool === "windowing" && "Drag: Adjust window/level | Wheel: Navigate slices"}
-                {activeTool === "brush" && "Click/Drag: Draw structure | Wheel: Navigate slices"}
-                {activeTool === "eraser" && "Click/Drag: Erase structure | Wheel: Navigate slices"}
+                {viewerTool === "select" && drawing.currentTool === "select" && "Mouse wheel: Navigate slices"}
+                {viewerTool === "pan" && "Drag: Pan image | Wheel: Navigate slices"}
+                {viewerTool === "zoom" && "Wheel: Zoom in/out"}
+                {viewerTool === "windowing" && "Drag: Adjust window/level"}
+                {drawing.currentTool === "brush" && "Click/Drag: Draw contour | Wheel: Navigate slices"}
+                {drawing.currentTool === "eraser" && "Click/Drag: Erase contours | Wheel: Navigate slices"}
+                {drawing.currentTool === "polygon" && "Click: Add points, double-click: Close polygon"}
               </div>
             </div>
           </div>
@@ -993,7 +619,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                   max={ctImages.length - 1}
                   step={1}
                   className="w-full"
-                  orientation="horizontal"
                 />
               </div>
             </div>
@@ -1040,13 +665,51 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                 </div>
               </div>
             </div>
+
+            {/* Drawing Controls */}
+            <div>
+              <h3 className="font-medium text-foreground mb-3">Drawing Tools</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm text-muted-foreground">Brush Size</label>
+                  <Slider
+                    value={[drawing.brushSize]}
+                    onValueChange={([value]) => drawing.setBrushSize(value)}
+                    min={1}
+                    max={20}
+                    step={1}
+                    className="mt-2"
+                  />
+                  <span className="text-xs text-muted-foreground">{drawing.brushSize}px</span>
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground">Eraser Size</label>
+                  <Slider
+                    value={[drawing.eraserSize]}
+                    onValueChange={([value]) => drawing.setEraserSize(value)}
+                    min={5}
+                    max={50}
+                    step={5}
+                    className="mt-2"
+                  />
+                  <span className="text-xs text-muted-foreground">{drawing.eraserSize}px</span>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => drawing.clearSlice(currentSlice)}
+                  className="w-full"
+                >
+                  Clear Slice
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Editor Panel */}
       <div className="w-80 bg-card border-l border-border flex flex-col">
-        {/* Header */}
         <div className="p-4 border-b border-border">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-foreground flex items-center gap-2">
@@ -1060,33 +723,33 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
           </div>
         </div>
 
-        {/* Structures List - Scrollable */}
-        <div className="flex-1 p-4 space-y-2 overflow-y-auto max-h-96">
-          {structures.map((structure) => (
-            <Card 
-              key={structure.id} 
-              className={`p-3 cursor-pointer transition-all ${
-                structure.isEditing ? "border-primary shadow-glow" : "hover:bg-muted/50"
-              }`}
-              onClick={() => startEditingStructure(structure.id)}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-4 h-4 rounded border-2"
-                    style={{ backgroundColor: structure.color }}
-                  />
-                  <span className="text-sm font-medium text-foreground">
-                    {structure.name}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1">
+        <div className="flex-1 p-4 space-y-2 overflow-y-auto">
+          {[...rtStructures, ...drawing.structures.filter(s => !s.id.startsWith('rt_'))].map((structure) => {
+            const isActive = drawing.activeStructureId === structure.id;
+            return (
+              <Card 
+                key={structure.id} 
+                className={`p-3 cursor-pointer transition-all ${
+                  isActive ? "border-primary shadow-glow" : "hover:bg-muted/50"
+                }`}
+                onClick={() => startEditingRTStructure(structure.id)}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-4 h-4 rounded border-2"
+                      style={{ backgroundColor: structure.color }}
+                    />
+                    <span className="text-sm font-medium text-foreground">
+                      {structure.name}
+                    </span>
+                  </div>
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={(e) => {
                       e.stopPropagation();
-                      toggleStructureVisibility(structure.id);
+                      toggleRTStructureVisibility(structure.id);
                     }}
                   >
                     {structure.visible ? (
@@ -1096,38 +759,24 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                     )}
                   </Button>
                 </div>
-              </div>
-              {structure.isEditing && (
-                <div className="mt-2 pt-2 border-t border-border">
-                  <div className="flex gap-1">
+                {isActive && (
+                  <div className="mt-2 pt-2 border-t border-border">
                     <Badge variant="secondary" className="text-xs">
-                      Editing
-                    </Badge>
-                    <Badge 
-                      variant={activeTool === "brush" ? "default" : "outline"} 
-                      className="text-xs"
-                    >
-                      Draw
-                    </Badge>
-                    <Badge 
-                      variant={activeTool === "eraser" ? "destructive" : "outline"} 
-                      className="text-xs"
-                    >
-                      Erase
+                      Active for drawing
                     </Badge>
                   </div>
-                </div>
-              )}
-            </Card>
-          ))}
+                )}
+              </Card>
+            );
+          })}
         </div>
 
-        {/* Footer */}
         <div className="p-4 border-t border-border bg-muted/30">
           <div className="text-xs text-muted-foreground space-y-1">
-            <div>Total structures: {structures.length}</div>
-            <div>Visible: {structures.filter(s => s.visible).length}</div>
-            <div>Editing: {structures.filter(s => s.isEditing).length}</div>
+            <div>Total structures: {drawing.structures.length}</div>
+            <div>Visible: {drawing.structures.filter(s => s.visible).length}</div>
+            <div>Active: {drawing.activeStructureId || 'None'}</div>
+            <div>Contours on slice: {drawing.getContoursForSlice(currentSlice).length}</div>
           </div>
         </div>
       </div>
