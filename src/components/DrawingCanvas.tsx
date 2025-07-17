@@ -15,7 +15,7 @@ interface DrawingCanvasProps {
   onAddPoint: (point: Point2D) => void;
   onFinishDrawing: () => void;
   onEraseAt: (point: Point2D) => void;
-  onWheel?: (e: WheelEvent) => void;
+  onWheel?: (e: React.WheelEvent<HTMLCanvasElement>) => void;
 }
 
 export function DrawingCanvas({
@@ -168,22 +168,8 @@ export function DrawingCanvas({
     }
   }, [currentTool, isDrawing, onFinishDrawing]);
 
-  // Handle wheel events
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !onWheel) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      onWheel(e);
-    };
-
-    canvas.addEventListener('wheel', handleWheel, { passive: false });
-    
-    return () => {
-      canvas.removeEventListener('wheel', handleWheel);
-    };
-  }, [onWheel]);
+  // Handle wheel events would be handled by parent component
+  // Remove this effect as we'll handle wheel on the main canvas
 
   // Set cursor based on tool
   const getCursor = (): string => {
@@ -206,9 +192,13 @@ export function DrawingCanvas({
       width={width}
       height={height}
       style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
         cursor: getCursor(),
         touchAction: 'none',
-        userSelect: 'none'
+        userSelect: 'none',
+        pointerEvents: currentTool === 'select' ? 'none' : 'auto'
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

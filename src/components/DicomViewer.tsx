@@ -28,7 +28,6 @@ import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
 import { DrawingCanvas } from "@/components/DrawingCanvas";
 import { useDrawing, DrawingTool } from "@/hooks/useDrawing";
 import { BooleanOperation, Point2D } from "@/lib/contour-utils";
-import { DebugInfo } from "@/components/DebugInfo";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -286,7 +285,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   };
 
   // Handle wheel events for slice navigation
-  const handleWheel = (e: WheelEvent) => {
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     
     if (viewerTool !== "zoom") {
@@ -455,7 +454,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
 
   return (
     <div className="min-h-screen bg-background flex animate-fade-in">
-      <DebugInfo />
       {/* Main Viewer */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
@@ -564,16 +562,17 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         {/* Viewer Canvas */}
         <div className="flex-1 flex">
           <div className="flex-1 bg-black flex items-center justify-center p-4">
-            <div className="relative w-full h-full flex items-center justify-center">
+            <div className="relative">
               <canvas
                 ref={canvasRef}
-                className="shadow-elevation"
+                className="shadow-elevation block"
                 style={{
                   imageRendering: "pixelated",
-                  width: "min(calc(100vh - 200px), calc(100vw - 700px))",
-                  height: "min(calc(100vh - 200px), calc(100vw - 700px))",
+                  width: "800px",
+                  height: "800px",
                   border: "2px solid #333"
                 }}
+                onWheel={handleWheel}
               />
               
               <DrawingCanvas
@@ -589,7 +588,6 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                 onAddPoint={handleAddPoint}
                 onFinishDrawing={handleFinishDrawing}
                 onEraseAt={handleEraseAt}
-                onWheel={handleWheel}
               />
               
               <div className="absolute bottom-2 left-2 bg-black/80 text-white p-2 rounded text-xs">
