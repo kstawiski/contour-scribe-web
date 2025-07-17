@@ -566,8 +566,87 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
               <DrawingCanvas
                 width={800}
                 height={800}
-                contours={drawing.getContoursForSlice(currentSlice)}
-                currentPath={drawing.currentPath}
+                contours={drawing.getContoursForSlice(currentSlice).map(contour => ({
+                  ...contour,
+                  points: contour.points.map(worldPoint => {
+                    const currentImage = ctImages[currentSlice];
+                    if (!currentImage) return { x: 0, y: 0 };
+                    
+                    const canvasSize = 800;
+                    const imageAspect = currentImage.width / currentImage.height;
+                    
+                    let drawWidth = currentImage.width;
+                    let drawHeight = currentImage.height;
+                    
+                    const maxSize = canvasSize * 0.95;
+                    if (imageAspect > 1) {
+                      drawWidth = maxSize;
+                      drawHeight = drawWidth / imageAspect;
+                    } else {
+                      drawHeight = maxSize;
+                      drawWidth = drawHeight * imageAspect;
+                    }
+                    
+                    drawWidth *= zoom;
+                    drawHeight *= zoom;
+                    
+                    const imageX = (canvasSize - drawWidth) / 2 + pan.x;
+                    const imageY = (canvasSize - drawHeight) / 2 + pan.y;
+                    
+                    const imagePosition = currentImage.imagePosition || [0, 0, 0];
+                    const pixelSpacing = currentImage.pixelSpacing || [1, 1];
+                    
+                    const pixelX = (worldPoint.x - imagePosition[0]) / pixelSpacing[0];
+                    const pixelY = (worldPoint.y - imagePosition[1]) / pixelSpacing[1];
+                    
+                    const scaleX = drawWidth / currentImage.width;
+                    const scaleY = drawHeight / currentImage.height;
+                    
+                    return {
+                      x: imageX + (pixelX * scaleX),
+                      y: imageY + (pixelY * scaleY)
+                    };
+                  })
+                }))}
+                currentPath={drawing.currentPath.map(worldPoint => {
+                  const currentImage = ctImages[currentSlice];
+                  if (!currentImage) return { x: 0, y: 0 };
+                  
+                  const canvasSize = 800;
+                  const imageAspect = currentImage.width / currentImage.height;
+                  
+                  let drawWidth = currentImage.width;
+                  let drawHeight = currentImage.height;
+                  
+                  const maxSize = canvasSize * 0.95;
+                  if (imageAspect > 1) {
+                    drawWidth = maxSize;
+                    drawHeight = drawWidth / imageAspect;
+                  } else {
+                    drawHeight = maxSize;
+                    drawWidth = drawHeight * imageAspect;
+                  }
+                  
+                  drawWidth *= zoom;
+                  drawHeight *= zoom;
+                  
+                  const imageX = (canvasSize - drawWidth) / 2 + pan.x;
+                  const imageY = (canvasSize - drawHeight) / 2 + pan.y;
+                  
+                  const imagePosition = currentImage.imagePosition || [0, 0, 0];
+                  const pixelSpacing = currentImage.pixelSpacing || [1, 1];
+                  
+                  const pixelX = (worldPoint.x - imagePosition[0]) / pixelSpacing[0];
+                  const pixelY = (worldPoint.y - imagePosition[1]) / pixelSpacing[1];
+                  
+                  const scaleX = drawWidth / currentImage.width;
+                  const scaleY = drawHeight / currentImage.height;
+                  
+                  return {
+                    x: imageX + (pixelX * scaleX),
+                    y: imageY + (pixelY * scaleY)
+                  };
+                })}
                 currentTool={drawing.currentTool}
                 isDrawing={drawing.isDrawing}
                 brushSize={drawing.brushSize}
