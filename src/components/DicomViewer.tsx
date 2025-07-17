@@ -184,6 +184,13 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     ctx.fillStyle = "#000000";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    // Set cursor style based on drawing state
+    if (isDrawing || activeTool === "brush") {
+      canvas.style.cursor = "crosshair";
+    } else {
+      canvas.style.cursor = "default";
+    }
+
     // Calculate image positioning and scaling to fill more of the canvas
     const imageAspect = currentImage.width / currentImage.height;
     const canvasAspect = 1; // Square canvas
@@ -404,23 +411,29 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
         ctx.setLineDash([]);
       });
     
-    // Render current drawing path (live preview) - convert from world to canvas coordinates
-    if (currentPath.length > 1) {
-      ctx.strokeStyle = '#ff0000'; // Red for current drawing
+    // Render current drawing path (live preview) - ALWAYS show during drawing
+    if (isDrawing && currentPath.length > 0) {
+      ctx.strokeStyle = '#00ff00'; // Bright green for current drawing
       ctx.lineWidth = 3;
-      ctx.setLineDash([2, 2]);
+      ctx.setLineDash([]);
       
       ctx.beginPath();
-      // Convert world coordinates to canvas coordinates for rendering
-      const firstCanvasPoint = worldToCanvas(currentPath[0].x, currentPath[0].y);
-      ctx.moveTo(firstCanvasPoint.x, firstCanvasPoint.y);
-      
-      currentPath.slice(1).forEach(point => {
-        const canvasPoint = worldToCanvas(point.x, point.y);
-        ctx.lineTo(canvasPoint.x, canvasPoint.y);
-      });
-      ctx.stroke();
-      ctx.setLineDash([]);
+      if (currentPath.length === 1) {
+        // Show single point
+        const canvasPoint = worldToCanvas(currentPath[0].x, currentPath[0].y);
+        ctx.arc(canvasPoint.x, canvasPoint.y, 2, 0, 2 * Math.PI);
+        ctx.fill();
+      } else {
+        // Show path
+        const firstCanvasPoint = worldToCanvas(currentPath[0].x, currentPath[0].y);
+        ctx.moveTo(firstCanvasPoint.x, firstCanvasPoint.y);
+        
+        currentPath.slice(1).forEach(point => {
+          const canvasPoint = worldToCanvas(point.x, point.y);
+          ctx.lineTo(canvasPoint.x, canvasPoint.y);
+        });
+        ctx.stroke();
+      }
     }
 
     // Enhanced debug overlay with coordinate info
