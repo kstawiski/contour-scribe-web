@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as dicomParser from 'dicom-parser';
 
 export interface DicomImage {
@@ -208,15 +209,15 @@ export class DicomProcessor {
 
     for (let i = 0; i < pixelData.length; i++) {
       // Apply rescaling
-      let value = pixelData[i] * rescaleSlope + rescaleIntercept;
-      
+      const rescaled = pixelData[i] * rescaleSlope + rescaleIntercept;
+
       // Apply windowing
-      if (value <= windowMin) {
+      if (rescaled <= windowMin) {
         output[i] = 0;
-      } else if (value >= windowMax) {
+      } else if (rescaled >= windowMax) {
         output[i] = 255;
       } else {
-        output[i] = Math.round(((value - windowMin) / windowWidth) * 255);
+        output[i] = Math.round(((rescaled - windowMin) / windowWidth) * 255);
       }
     }
 
