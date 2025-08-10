@@ -32,6 +32,7 @@ import { BooleanOperation, Point2D } from "@/lib/contour-utils";
 interface DicomViewerProps {
   ctImages: DicomImage[];
   rtStruct?: DicomRTStruct;
+  probabilityMap?: Float32Array[];
   onBack?: () => void;
 }
 
@@ -45,7 +46,7 @@ interface RTStructure {
 
 type ViewerTool = "select" | "pan" | "zoom" | "windowing";
 
-export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) => {
+export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: DicomViewerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
 
@@ -59,6 +60,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
   const [windowWidth, setWindowWidth] = useState([800]);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [probThreshold, setProbThreshold] = useState([0.5]);
   
   // RT Structure state - only include RT structures
   const [rtStructures, setRTStructures] = useState<RTStructure[]>(() => {
@@ -151,9 +153,33 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
       }
     } catch (error) {
       console.error("Error rendering DICOM image:", error);
-      
+
       ctx.fillStyle = "#333333";
       ctx.fillRect(imageX, imageY, drawWidth, drawHeight);
+    }
+
+    // Render probability map overlay if available
+    if (probabilityMap && probabilityMap[currentSlice]) {
+      const slice = probabilityMap[currentSlice];
+      const overlayCanvas = document.createElement('canvas');
+      overlayCanvas.width = currentImage.width;
+      overlayCanvas.height = currentImage.height;
+      const octx = overlayCanvas.getContext('2d');
+      if (octx) {
+        const imageData = octx.createImageData(currentImage.width, currentImage.height);
+        for (let i = 0; i < slice.length; i++) {
+          const p = slice[i];
+          if (p >= probThreshold[0]) {
+            const idx = i * 4;
+            imageData.data[idx] = 255;
+            imageData.data[idx + 1] = 0;
+            imageData.data[idx + 2] = 0;
+            imageData.data[idx + 3] = Math.round(p * 255);
+          }
+        }
+        octx.putImageData(imageData, 0, 0);
+        ctx.drawImage(overlayCanvas, imageX, imageY, drawWidth, drawHeight);
+      }
     }
 
     // Coordinate transformation functions
@@ -228,7 +254,7 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
     }
 
     
-  }, [currentSlice, rtStructures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawing]);
+  }, [currentSlice, rtStructures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawing, probabilityMap, probThreshold]);
 
   // Convert canvas coordinates to world coordinates for drawing
   const canvasToWorld = (canvasX: number, canvasY: number): Point2D => {
@@ -731,6 +757,20 @@ export const DicomViewer = ({ ctImages, rtStruct, onBack }: DicomViewerProps) =>
                   />
                   <span className="text-xs text-muted-foreground">{(zoom * 100).toFixed(0)}%</span>
                 </div>
+                {probabilityMap && (
+                  <div>
+                    <label className="text-sm text-muted-foreground">Probability Threshold</label>
+                    <Slider
+                      value={probThreshold}
+                      onValueChange={setProbThreshold}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      className="mt-2"
+                    />
+                    <span className="text-xs text-muted-foreground">{probThreshold[0].toFixed(2)}</span>
+                  </div>
+                )}
               </div>
             </div>
 
