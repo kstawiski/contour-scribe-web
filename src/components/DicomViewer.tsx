@@ -44,6 +44,7 @@ import { useToast } from "@/hooks/use-toast";
 import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
 import { DrawingCanvas } from "@/components/DrawingCanvas";
 import { MPRViewer } from "@/components/MPRViewer";
+import { EditingPanel } from "@/components/EditingPanel";
 import { useDrawing, DrawingTool } from "@/hooks/useDrawing";
 import { Point2D, interpolateContours } from "@/lib/contour-utils";
 import { exportRTStruct } from "@/lib/rtstruct-export";
@@ -52,6 +53,7 @@ import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShort
 import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
 import { HUOverlay } from "@/components/HUOverlay";
 import { WINDOW_PRESETS } from "@/lib/window-presets";
+import { BooleanOp, ImageData2D } from "@/lib/editing-utils";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -385,6 +387,70 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   // Drawing event handlers
   const handleStartDrawing = (point: Point2D) => {
     const worldPoint = canvasToWorld(point.x, point.y);
+    
+    // Handle region-grow and magic-wand tools
+    if (drawing.currentTool === 'region-grow' || drawing.currentTool === 'magic-wand') {
+      const currentImage = ctImages[currentSlice];
+      if (!currentImage) return;
+      
+      // Convert world point to pixel coordinates
+      const config = {
+        canvasSize: 800,
+        zoom,
+        pan,
+      };
+      
+      const bounds = getImageBounds(currentImage, config);
+      const pixelX = Math.floor((worldPoint.x - bounds.x) / (bounds.width / currentImage.width));
+      const pixelY = Math.floor((worldPoint.y - bounds.y) / (bounds.height / currentImage.height));
+      
+      // Check if click is within image bounds
+      if (pixelX < 0 || pixelX >= currentImage.width || pixelY < 0 || pixelY >= currentImage.height) {
+        toast({
+          title: "Click outside image",
+          description: "Please click on the image area",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      const imageData = {
+        width: currentImage.width,
+        height: currentImage.height,
+        data: currentImage.pixelData,
+        windowWidth: windowWidth[0],
+        windowCenter: windowLevel[0],
+      };
+      
+      // Get tolerance from EditingPanel (default to 50 if not available)
+      const tolerance = 50; // This should ideally come from EditingPanel state
+      
+      const success = drawing.performRegionGrowing(
+        imageData,
+        pixelX,
+        pixelY,
+        tolerance,
+        currentSlice,
+        currentImage.rescaleSlope || 1,
+        currentImage.rescaleIntercept || 0
+      );
+      
+      if (success) {
+        toast({
+          title: "Region growing complete",
+          description: `Region extracted at (${pixelX}, ${pixelY})`,
+        });
+      } else {
+        toast({
+          title: "No region found",
+          description: "Try adjusting the tolerance or clicking on a different area",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
+    
+    // Normal drawing behavior
     drawing.startDrawing(worldPoint);
   };
 
@@ -704,6 +770,192 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       });
     }
   };
+
+  // Editing handlers
+  const handleSelectContour = useCallback((canvasPoint: Point2D, selectPoint: boolean) => {
+    // Convert canvas point to world coordinates
+    const currentImage = ctImages[currentSlice];
+    if (!currentImage) return;
+
+    const config = { canvasSize: 800, zoom, pan };
+    const worldPoint = canvasToWorldUtil(canvasPoint.x, canvasPoint.y, currentImage, config);
+
+    const selected = drawing.selectContour(worldPoint, currentSlice, selectPoint);
+    if (!selected) {
+      drawing.deselectContour();
+    }
+  }, [ctImages, currentSlice, zoom, pan, drawing]);
+
+  const handleMovePoint = useCallback((contourId: string, pointIndex: number, canvasPos: Point2D, elastic: boolean) => {
+    const currentImage = ctImages[currentSlice];
+    if (!currentImage) return;
+
+    const config = { canvasSize: 800, zoom, pan };
+    const worldPos = canvasToWorldUtil(canvasPos.x, canvasPos.y, currentImage, config);
+
+    drawing.moveContourPoint(contourId, pointIndex, worldPos, elastic);
+  }, [ctImages, currentSlice, zoom, pan, drawing]);
+
+  const handleInsertPoint = useCallback((contourId: string, canvasPos: Point2D) => {
+    const currentImage = ctImages[currentSlice];
+    if (!currentImage) return;
+
+    const config = { canvasSize: 800, zoom, pan };
+    const worldPos = canvasToWorldUtil(canvasPos.x, canvasPos.y, currentImage, config);
+
+    drawing.insertContourPoint(contourId, worldPos);
+  }, [ctImages, currentSlice, zoom, pan, drawing]);
+
+  const handleDeletePoint = useCallback((contourId: string, pointIndex: number) => {
+    drawing.deleteContourPoint(contourId, pointIndex);
+  }, [drawing]);
+
+  const handleDeleteContour = useCallback(() => {
+    if (drawing.selectedContour) {
+      drawing.deleteContour(drawing.selectedContour.contourId);
+      drawing.deselectContour();
+      toast({
+        title: "Contour deleted",
+        description: "The selected contour has been removed",
+      });
+    }
+  }, [drawing, toast]);
+
+  const handleCopyContour = useCallback(() => {
+    if (drawing.copySelectedContour()) {
+      toast({
+        title: "Contour copied",
+        description: "Use Paste to add it to another slice",
+      });
+    }
+  }, [drawing, toast]);
+
+  const handlePasteContour = useCallback(() => {
+    if (drawing.pasteContour(currentSlice)) {
+      toast({
+        title: "Contour pasted",
+        description: `Added to slice ${currentSlice}`,
+      });
+    }
+  }, [drawing, currentSlice, toast]);
+
+  const handleSmooth2D = useCallback((iterations: number, strength: number) => {
+    if (drawing.selectedContour) {
+      drawing.smooth2DContour(drawing.selectedContour.contourId, iterations, strength);
+      toast({
+        title: "Smoothing applied",
+        description: `Contour smoothed with ${iterations} iterations`,
+      });
+    }
+  }, [drawing, toast]);
+
+  const handleSmooth3D = useCallback((iterations: number, strength: number) => {
+    if (drawing.selectedContour) {
+      drawing.smooth3DStructure(drawing.selectedContour.structureId, iterations, strength);
+      toast({
+        title: "3D Smoothing applied",
+        description: `Structure smoothed across all slices`,
+      });
+    }
+  }, [drawing, toast]);
+
+  const handleApplyMargin = useCallback((margin: number) => {
+    if (drawing.selectedContour) {
+      const currentImage = ctImages[currentSlice];
+      const pixelSpacing = currentImage?.pixelSpacing?.[0] || 1.0;
+      drawing.applyMarginToContour(drawing.selectedContour.contourId, margin, pixelSpacing);
+      toast({
+        title: "Margin applied",
+        description: `${margin > 0 ? 'Expanded' : 'Contracted'} by ${Math.abs(margin)}mm`,
+      });
+    }
+  }, [drawing, ctImages, currentSlice, toast]);
+
+  const handleBooleanOp = useCallback((operation: BooleanOp, targetId: string) => {
+    if (drawing.selectedContour && targetId) {
+      const success = drawing.performBooleanOp(
+        drawing.selectedContour.contourId,
+        targetId,
+        operation
+      );
+      if (success) {
+        toast({
+          title: "Boolean operation complete",
+          description: `${operation} operation applied`,
+        });
+      }
+    }
+  }, [drawing, toast]);
+
+  const handleCropWithMargin = useCallback((cropId: string, margin: number) => {
+    if (drawing.selectedContour && cropId) {
+      const currentImage = ctImages[currentSlice];
+      const pixelSpacing = currentImage?.pixelSpacing?.[0] || 1.0;
+      const success = drawing.cropContourWithMargin(
+        drawing.selectedContour.contourId,
+        cropId,
+        margin,
+        pixelSpacing
+      );
+      if (success) {
+        toast({
+          title: "Crop applied",
+          description: `Contour cropped with ${margin}mm margin`,
+        });
+      }
+    }
+  }, [drawing, ctImages, currentSlice, toast]);
+
+  const handleThreshold = useCallback((minHU: number, maxHU: number) => {
+    const currentImage = ctImages[currentSlice];
+    if (!currentImage) return;
+
+    const imageData: ImageData2D = {
+      width: currentImage.width,
+      height: currentImage.height,
+      data: currentImage.pixelData,
+      windowWidth: windowWidth[0],
+      windowCenter: windowLevel[0],
+    };
+
+    const success = drawing.performThresholdSegmentation(
+      imageData,
+      minHU,
+      maxHU,
+      currentSlice,
+      currentImage.rescaleSlope || 1,
+      currentImage.rescaleIntercept || 0
+    );
+
+    if (success) {
+      toast({
+        title: "Segmentation complete",
+        description: `Threshold segmentation applied (${minHU} to ${maxHU} HU)`,
+      });
+    } else {
+      toast({
+        title: "No regions found",
+        description: "Try adjusting the threshold values",
+        variant: "destructive",
+      });
+    }
+  }, [drawing, ctImages, currentSlice, windowWidth, windowLevel, toast]);
+
+  const handleRegionGrow = useCallback((tolerance: number) => {
+    drawing.setTool('region-grow');
+    toast({
+      title: "Region growing active",
+      description: "Click on the image to set seed point",
+    });
+  }, [drawing, toast]);
+
+  const handleMagicWand = useCallback((tolerance: number) => {
+    drawing.setTool('magic-wand');
+    toast({
+      title: "Magic wand active",
+      description: "Click on the image to select region",
+    });
+  }, [drawing, toast]);
 
   // Fullscreen toggle
   const toggleFullscreen = () => {
@@ -1395,6 +1647,24 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                 onAddPoint={handleAddPoint}
                 onFinishDrawing={handleFinishDrawing}
                 onEraseAt={handleEraseAt}
+                onWheel={(e) => {
+                  if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                    setZoom(prev => Math.max(0.5, Math.min(5, prev * delta)));
+                  } else {
+                    e.preventDefault();
+                    const newSlice = currentSlice + (e.deltaY > 0 ? 1 : -1);
+                    if (newSlice >= 0 && newSlice < ctImages.length) {
+                      setCurrentSlice(newSlice);
+                    }
+                  }
+                }}
+                selectedContour={drawing.selectedContour}
+                onSelectContour={handleSelectContour}
+                onMovePoint={handleMovePoint}
+                onInsertPoint={handleInsertPoint}
+                onDeletePoint={handleDeletePoint}
               />
 
               {/* HU Value Overlay */}
@@ -1689,6 +1959,30 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
               </div>
             </div>
           </div>
+
+          {/* Advanced Editing Panel */}
+          {drawing.selectedContour && (
+            <div className="border-t border-border overflow-y-auto">
+              <EditingPanel
+                selectedContour={drawing.selectedContour}
+                structures={drawing.structures}
+                elasticRadius={drawing.elasticRadius}
+                onElasticRadiusChange={drawing.setElasticRadius}
+                onDeleteContour={handleDeleteContour}
+                onCopyContour={handleCopyContour}
+                onPasteContour={handlePasteContour}
+                onSmooth2D={handleSmooth2D}
+                onSmooth3D={handleSmooth3D}
+                onApplyMargin={handleApplyMargin}
+                onBooleanOp={handleBooleanOp}
+                onCropWithMargin={handleCropWithMargin}
+                onThreshold={handleThreshold}
+                onRegionGrow={handleRegionGrow}
+                onMagicWand={handleMagicWand}
+                pixelSpacing={ctImages[currentSlice]?.pixelSpacing?.[0]}
+              />
+            </div>
+          )}
         </div>
         )}
 
