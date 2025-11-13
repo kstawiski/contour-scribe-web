@@ -265,8 +265,13 @@ export class DicomProcessor {
   }
 
   /**
-   * Match RT Structure contours to CT image slices based on Z-coordinates
-   * This improves upon the default sliceIndex: 0 by calculating proper indices
+   * Match RT Structure contours to CT image slices based on Z-coordinates.
+   * This improves upon the default sliceIndex: 0 by calculating proper indices.
+   * 
+   * Note: If no slice is found within tolerance (half slice thickness), the function
+   * will still return the closest slice but log a warning. This behavior ensures
+   * contours are always assigned to a slice for visualization, even if the match
+   * is imperfect (e.g., due to slight misalignment in imaging data).
    */
   static matchContoursToSlices(
     rtStruct: DicomRTStruct,
