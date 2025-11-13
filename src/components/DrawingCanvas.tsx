@@ -185,22 +185,28 @@ export function DrawingCanvas({
     }
   }, [contours, currentPath, width, height, brushSize, selectedContour, currentTool, hoverPointIndex, draggingPointIndex]);
 
-  // Handle pointer events
+  // Handle pointer events with proper coordinate transformation
   const getCanvasPoint = useCallback((e: React.PointerEvent<HTMLCanvasElement>): Point2D => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
 
     const rect = canvas.getBoundingClientRect();
+
+    // Calculate the scale between canvas internal resolution and display size
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
 
-    return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY
-    };
+    // Get the mouse position relative to canvas, then scale to internal coordinates
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+
+    return { x, y };
   }, []);
 
-  const findPointAtPosition = useCallback((pos: Point2D, contour: Contour, threshold: number = 10): number | null => {
+  // Find point at position (both in canvas coordinate space)
+  const findPointAtPosition = useCallback((pos: Point2D, contour: Contour, threshold: number = 15): number | null => {
+    // Both pos and contour.points are in canvas coordinates (0-800)
+    // So we can directly compare them
     for (let i = 0; i < contour.points.length; i++) {
       const p = contour.points[i];
       const dist = Math.sqrt(Math.pow(p.x - pos.x, 2) + Math.pow(p.y - pos.y, 2));
