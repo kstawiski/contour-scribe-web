@@ -100,12 +100,17 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
         }
         return 0;
       });
-      
-      onDataLoaded({ ctImages, rtStruct });
-      
+
+      // Match RT structure contours to CT slices if RT structure is present
+      const matchedRTStruct = rtStruct
+        ? DicomProcessor.matchContoursToSlices(rtStruct, ctImages)
+        : undefined;
+
+      onDataLoaded({ ctImages, rtStruct: matchedRTStruct });
+
       toast({
         title: "DICOM data loaded successfully",
-        description: `Found ${ctImages.length} CT images${rtStruct ? " and RT structure" : ""}`,
+        description: `Found ${ctImages.length} CT images${matchedRTStruct ? " and RT structure" : ""}`,
       });
       
     } catch (error) {

@@ -259,4 +259,63 @@ export class DicomProcessor {
 
     ctx.putImageData(imageData, 0, 0);
   }
+
+  /**
+   * Match RT Structure contours to CT image slices based on Z-coordinates
+   * This improves upon the default sliceIndex: 0 by calculating proper indices
+   */
+  static matchContoursToSlices(
+    rtStruct: DicomRTStruct,
+    ctImages: DicomImage[]
+  ): DicomRTStruct {
+    if (!rtStruct || !ctImages || ctImages.length === 0) {
+      return rtStruct;
+    }
+
+    // Create a copy of the RT structure to avoid mutation
+    const matched: DicomRTStruct = {
+      structures: rtStruct.structures.map(structure => ({
+        ...structure,
+        contours: structure.contours.map(contour => {
+          if (contour.points.length === 0) {
+            return { ...contour, sliceIndex: 0 };
+          }
+
+          // Get the Z coordinate from the first point of the contour
+          const contourZ = contour.points[0][2];
+
+          // Find the closest CT slice by Z coordinate
+          let closestSliceIndex = 0;
+          let minDistance = Infinity;
+
+          ctImages.forEach((image, index) => {
+            const sliceZ = image.sliceLocation ?? image.imagePosition?.[2] ?? 0;
+            const distance = Math.abs(contourZ - sliceZ);
+
+            if (distance < minDistance) {
+              minDistance = distance;
+              closestSliceIndex = index;
+            }
+          });
+
+          // Check if the match is within a reasonable tolerance (half slice thickness)
+          const matchedImage = ctImages[closestSliceIndex];
+          const tolerance = (matchedImage.sliceThickness || 1.0) / 2;
+
+          if (minDistance <= tolerance) {
+            return { ...contour, sliceIndex: closestSliceIndex };
+          } else {
+            // If no good match, keep original index but log warning
+            console.warn(
+              `Contour Z=${contourZ} is not within tolerance of any CT slice (min distance: ${minDistance})`
+            );
+            return { ...contour, sliceIndex: closestSliceIndex };
+          }
+        }),
+      })),
+      frameOfReference: rtStruct.frameOfReference,
+    };
+
+    return matched;
+  }
 }

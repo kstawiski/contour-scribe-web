@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -27,7 +27,9 @@ import { useToast } from "@/hooks/use-toast";
 import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
 import { DrawingCanvas } from "@/components/DrawingCanvas";
 import { useDrawing, DrawingTool } from "@/hooks/useDrawing";
-import { BooleanOperation, Point2D } from "@/lib/contour-utils";
+import { BooleanOperation, Point2D, interpolateContours } from "@/lib/contour-utils";
+import { exportRTStruct } from "@/lib/rtstruct-export";
+import { worldToCanvas as worldToCanvasUtil, canvasToWorld as canvasToWorldUtil, getImageBounds } from "@/lib/coordinate-utils";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -48,6 +50,8 @@ type ViewerTool = "select" | "pan" | "zoom" | "windowing";
 
 export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: DicomViewerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const { toast } = useToast();
 
   // Drawing system
@@ -61,6 +65,10 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [probThreshold, setProbThreshold] = useState([0.5]);
+
+  // Mouse interaction state
+  const [isDragging, setIsDragging] = useState(false);
+  const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
   
   // RT Structure state - only include RT structures
   const [rtStructures, setRTStructures] = useState<RTStructure[]>(() => {
@@ -138,17 +146,21 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
     // Render the DICOM image
     try {
-      const tempCanvas = document.createElement('canvas');
+      // Reuse temporary canvas if possible
+      if (!tempCanvasRef.current) {
+        tempCanvasRef.current = document.createElement('canvas');
+      }
+      const tempCanvas = tempCanvasRef.current;
       const tempCtx = tempCanvas.getContext('2d');
-      
+
       if (tempCtx) {
         DicomProcessor.renderImageToCanvas(
-          tempCanvas, 
-          currentImage, 
-          windowLevel[0], 
+          tempCanvas,
+          currentImage,
+          windowLevel[0],
           windowWidth[0]
         );
-        
+
         ctx.drawImage(tempCanvas, imageX, imageY, drawWidth, drawHeight);
       }
     } catch (error) {
@@ -161,10 +173,16 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     // Render probability map overlay if available
     if (probabilityMap && probabilityMap[currentSlice]) {
       const slice = probabilityMap[currentSlice];
-      const overlayCanvas = document.createElement('canvas');
+
+      // Reuse overlay canvas if possible
+      if (!overlayCanvasRef.current) {
+        overlayCanvasRef.current = document.createElement('canvas');
+      }
+      const overlayCanvas = overlayCanvasRef.current;
       overlayCanvas.width = currentImage.width;
       overlayCanvas.height = currentImage.height;
       const octx = overlayCanvas.getContext('2d');
+
       if (octx) {
         const imageData = octx.createImageData(currentImage.width, currentImage.height);
         for (let i = 0; i < slice.length; i++) {
@@ -183,20 +201,14 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     }
 
     // Coordinate transformation functions
+    const config = {
+      canvasSize,
+      zoom,
+      pan
+    };
+
     const worldToCanvas = (worldX: number, worldY: number) => {
-      const imagePosition = currentImage.imagePosition || [0, 0, 0];
-      const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-      
-      const pixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
-      const pixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
-      
-      const scaleX = drawWidth / currentImage.width;
-      const scaleY = drawHeight / currentImage.height;
-      
-      return {
-        x: imageX + (pixelX * scaleX),
-        y: imageY + (pixelY * scaleY)
-      };
+      return worldToCanvasUtil(worldX, worldY, currentImage, config);
     };
 
     // Render RT structure contours
@@ -253,48 +265,30 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       });
     }
 
-    
+
   }, [currentSlice, rtStructures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawing, probabilityMap, probThreshold]);
+
+  // Cleanup effect to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      // Clean up temporary canvases on unmount
+      tempCanvasRef.current = null;
+      overlayCanvasRef.current = null;
+    };
+  }, []);
 
   // Convert canvas coordinates to world coordinates for drawing
   const canvasToWorld = (canvasX: number, canvasY: number): Point2D => {
     const currentImage = ctImages[currentSlice];
     if (!currentImage) return { x: 0, y: 0 };
-    
-    const canvasSize = 800;
-    const imageAspect = currentImage.width / currentImage.height;
-    
-    let drawWidth = currentImage.width;
-    let drawHeight = currentImage.height;
-    
-    const maxSize = canvasSize * 0.95;
-    if (imageAspect > 1) {
-      drawWidth = maxSize;
-      drawHeight = drawWidth / imageAspect;
-    } else {
-      drawHeight = maxSize;
-      drawWidth = drawHeight * imageAspect;
-    }
-    
-    drawWidth *= zoom;
-    drawHeight *= zoom;
-    
-    const imageX = (canvasSize - drawWidth) / 2 + pan.x;
-    const imageY = (canvasSize - drawHeight) / 2 + pan.y;
-    
-    const imagePosition = currentImage.imagePosition || [0, 0, 0];
-    const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-    
-    const scaleX = drawWidth / currentImage.width;
-    const scaleY = drawHeight / currentImage.height;
-    
-    const pixelX = (canvasX - imageX) / scaleX;
-    const pixelY = (canvasY - imageY) / scaleY;
-    
-    return {
-      x: imagePosition[0] + (pixelX * pixelSpacing[0]),
-      y: imagePosition[1] + (pixelY * pixelSpacing[1])
+
+    const config = {
+      canvasSize: 800,
+      zoom,
+      pan
     };
+
+    return canvasToWorldUtil(canvasX, canvasY, currentImage, config);
   };
 
   // Handle wheel events for slice navigation
@@ -335,6 +329,49 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   const handleEraseAt = (point: Point2D) => {
     const worldPoint = canvasToWorld(point.x, point.y);
     drawing.eraseAt(worldPoint, currentSlice);
+  };
+
+  // Mouse event handlers for Pan and Windowing tools
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (viewerTool === "pan" || viewerTool === "windowing") {
+      setIsDragging(true);
+      setLastMousePos({ x: e.clientX, y: e.clientY });
+    }
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDragging) return;
+
+    const deltaX = e.clientX - lastMousePos.x;
+    const deltaY = e.clientY - lastMousePos.y;
+
+    if (viewerTool === "pan") {
+      setPan(prev => ({
+        x: prev.x + deltaX,
+        y: prev.y + deltaY
+      }));
+    } else if (viewerTool === "windowing") {
+      // Horizontal movement adjusts window width
+      // Vertical movement adjusts window level
+      setWindowWidth(prev => {
+        const newWidth = Math.max(1, prev[0] + deltaX * 2);
+        return [newWidth];
+      });
+      setWindowLevel(prev => {
+        const newLevel = prev[0] - deltaY * 2; // Inverted for intuitive up/down
+        return [newLevel];
+      });
+    }
+
+    setLastMousePos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleCanvasMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleCanvasMouseLeave = () => {
+    setIsDragging(false);
   };
 
   // Tool change handlers
@@ -397,17 +434,36 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   };
 
   const handleDownload = () => {
-    toast({
-      title: "Export initiated",
-      description: "Generating DICOM RT Structure file...",
-    });
-    
-    setTimeout(() => {
+    try {
+      if (drawing.structures.length === 0) {
+        toast({
+          title: "No structures to export",
+          description: "Please create at least one structure before exporting",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      toast({
+        title: "Export initiated",
+        description: "Generating DICOM RT Structure file...",
+      });
+
+      // Export as JSON format (DICOM-RT representation)
+      exportRTStruct(drawing.structures, ctImages, 'json', rtStruct);
+
       toast({
         title: "Export complete",
         description: "RT Structure file downloaded successfully",
       });
-    }, 2000);
+    } catch (error) {
+      console.error('Export failed:', error);
+      toast({
+        title: "Export failed",
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+        variant: "destructive"
+      });
+    }
   };
 
   const resetView = () => {
@@ -427,46 +483,58 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       if (activeStructure && activeStructure.contours.length >= 2) {
         // Find slices with contours
         const slicesWithContours = [...new Set(activeStructure.contours.map(c => c.sliceIndex))].sort((a, b) => a - b);
-        
+
         if (slicesWithContours.length >= 2) {
-          const startSlice = slicesWithContours[0];
-          const endSlice = slicesWithContours[slicesWithContours.length - 1];
-          const targetSlices = [];
-          
-          for (let i = startSlice + 1; i < endSlice; i++) {
-            if (!slicesWithContours.includes(i)) {
-              targetSlices.push(i);
+          let interpolatedCount = 0;
+
+          // Interpolate between consecutive pairs of slices with contours
+          for (let i = 0; i < slicesWithContours.length - 1; i++) {
+            const slice1 = slicesWithContours[i];
+            const slice2 = slicesWithContours[i + 1];
+
+            // Find the contours for these slices
+            const contour1 = activeStructure.contours.find(c => c.sliceIndex === slice1);
+            const contour2 = activeStructure.contours.find(c => c.sliceIndex === slice2);
+
+            if (contour1 && contour2) {
+              // Interpolate for all slices between slice1 and slice2
+              for (let targetSlice = slice1 + 1; targetSlice < slice2; targetSlice++) {
+                const interpolatedContour = interpolateContours(contour1, contour2, targetSlice);
+
+                if (interpolatedContour) {
+                  // Add the interpolated contour to the drawing
+                  drawing.addContour(interpolatedContour);
+                  interpolatedCount++;
+                }
+              }
             }
           }
-          
-          if (targetSlices.length > 0) {
-            // Simplified interpolation - just copy the first contour to all target slices
-            const firstContour = activeStructure.contours[0];
-            targetSlices.forEach(slice => {
-              const interpolatedContour = {
-                id: `interpolated_${Date.now()}_${slice}`,
-                points: firstContour.points,
-                sliceIndex: slice,
-                structureId: drawing.activeStructureId!,
-                isClosed: true,
-                color: firstContour.color
-              };
-              
-              drawing.addStructure({
-                id: drawing.activeStructureId!,
-                name: activeStructure.name,
-                color: activeStructure.color,
-                visible: true
-              });
-            });
-            
+
+          if (interpolatedCount > 0) {
             toast({
               title: "Interpolation complete",
-              description: `Added contours to ${targetSlices.length} slices`,
+              description: `Added ${interpolatedCount} interpolated contours`,
+            });
+          } else {
+            toast({
+              title: "No interpolation needed",
+              description: "All intermediate slices already have contours",
             });
           }
         }
+      } else {
+        toast({
+          title: "Cannot interpolate",
+          description: "Need at least 2 contours to interpolate",
+          variant: "destructive"
+        });
       }
+    } else {
+      toast({
+        title: "No structure selected",
+        description: "Please select a structure first",
+        variant: "destructive"
+      });
     }
   };
 
@@ -584,9 +652,14 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                   imageRendering: "pixelated",
                   width: "800px",
                   height: "800px",
-                  border: "2px solid #333"
+                  border: "2px solid #333",
+                  cursor: viewerTool === "pan" ? "grab" : viewerTool === "windowing" ? "crosshair" : "default"
                 }}
                 onWheel={handleWheel}
+                onMouseDown={handleCanvasMouseDown}
+                onMouseMove={handleCanvasMouseMove}
+                onMouseUp={handleCanvasMouseUp}
+                onMouseLeave={handleCanvasMouseLeave}
               />
               
               <DrawingCanvas
