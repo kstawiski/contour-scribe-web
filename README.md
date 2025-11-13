@@ -2,7 +2,7 @@
 
 > A specialized web-based medical imaging tool for visualization and modification of DICOM-RT (Radiation Therapy) files.
 
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
+![Version](https://img.shields.io/badge/version-0.3.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![React](https://img.shields.io/badge/React-18.3.1-61dafb)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.5.3-3178c6)
@@ -26,6 +26,7 @@ DicomEdit enables medical professionals (radiologists, oncologists, researchers)
 - Interactive window/level adjustment
 - Zoom, pan, and scroll controls
 - Overlay RT structure contours on CT images
+- **Comprehensive keyboard shortcuts** for fast workflow (press `?` for help)
 
 ✅ **Edit & Create**
 - Draw new contours with brush or polygon tools
@@ -133,7 +134,8 @@ Output will be in the `dist/` directory, ready for deployment.
 
 ## 🗺️ Roadmap
 
-### ✅ Completed (v0.2.0)
+### ✅ Completed (v0.3.0)
+- **Keyboard shortcuts** for all tools and actions (NEW in v0.3.0)
 - RT Structure export functionality
 - Proper contour interpolation
 - Interactive pan and window/level tools
@@ -142,9 +144,9 @@ Output will be in the `dist/` directory, ready for deployment.
 - Memory optimization
 
 ### 🚧 In Progress
-- Keyboard shortcuts
 - Undo/Redo system
 - HU value display on hover
+- Code splitting to reduce bundle size
 
 ### 📋 Planned
 - Structure editing UI (rename, recolor)

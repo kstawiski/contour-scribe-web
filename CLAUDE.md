@@ -1,7 +1,7 @@
 # DicomEdit Development Guide
 
 **Last Updated**: 2025-11-13
-**Current Version**: 0.2.0
+**Current Version**: 0.3.0
 **Status**: Active Development
 
 ---
@@ -154,6 +154,12 @@ App (ErrorBoundary, Router, QueryClient)
 - ✅ Build optimization (successful production build)
 
 ### Recently Completed (Nov 13, 2025)
+- **Keyboard Shortcuts System**: Complete keyboard navigation and shortcuts (v0.3.0)
+  - Tool selection (B, E, P, W, S)
+  - Navigation ([, ], +, -, R)
+  - Actions (Ctrl+S, I, Escape)
+  - Quick structure selection (1-9)
+  - Help modal (? or H)
 - Fixed interpolation algorithm (now uses proper linear interpolation)
 - Implemented RT Structure export functionality (3 formats)
 - Fixed Pan and Window/Level interactive tools
@@ -169,18 +175,21 @@ App (ErrorBoundary, Router, QueryClient)
 ### Phase 1: Critical UX Improvements (1-2 weeks)
 **Priority**: HIGH
 
-- [ ] **Keyboard Shortcuts**
-  - `B` - Brush tool
-  - `E` - Eraser
-  - `P` - Pan tool
-  - `W` - Window/Level tool
-  - `Space + Drag` - Quick pan
-  - `[` / `]` - Previous/Next slice
-  - `Ctrl+Z` / `Ctrl+Y` - Undo/Redo
-  - `Ctrl+S` - Quick export
-  - `Delete` - Remove selected contour
-  - `1-9` - Quick structure selection
-  - Files: `src/hooks/useKeyboardShortcuts.ts`, update `DicomViewer.tsx`
+- [x] **Keyboard Shortcuts** ✅ Completed (v0.3.0)
+  - ✅ `B` - Brush tool
+  - ✅ `E` - Eraser
+  - ✅ `P` - Pan tool
+  - ✅ `W` - Window/Level tool
+  - ✅ `[` / `]` - Previous/Next slice
+  - ✅ `Ctrl+S` - Quick export
+  - ✅ `1-9` - Quick structure selection
+  - ✅ `?` / `H` - Show keyboard shortcuts help
+  - ✅ `R` - Reset view
+  - ✅ `+` / `-` - Zoom in/out
+  - ✅ `I` - Interpolate contours
+  - ✅ `Escape` - Cancel polygon drawing
+  - Note: Space+Drag and Ctrl+Z/Y for future (needs additional features)
+  - Files: `src/hooks/useKeyboardShortcuts.ts`, `src/components/KeyboardShortcutsHelp.tsx`, `DicomViewer.tsx`
 
 - [ ] **Undo/Redo System**
   - History stack for contour operations
@@ -628,6 +637,28 @@ This file is designed to help you quickly understand the project state and pick 
 ---
 
 ## 📝 Change Log
+
+### v0.3.0 (2025-11-13)
+**Major Feature**:
+- **Keyboard Shortcuts System**: Comprehensive keyboard navigation
+  - useKeyboardShortcuts hook for generic keyboard handling
+  - KeyboardShortcutsHelp modal with categorized shortcuts
+  - Tool selection shortcuts (B, E, P, W, S)
+  - Navigation shortcuts ([, ], +, -, R)
+  - Action shortcuts (Ctrl+S, I, Escape)
+  - Quick structure selection (1-9)
+  - Help toggle (? or H)
+  - Platform-aware display (⌘ on Mac, Ctrl on others)
+  - Context-aware (doesn't interfere with text inputs)
+
+**Benefits**:
+- Significantly faster workflow for medical professionals
+- Reduced mouse movements and clicks
+- Improved accessibility with keyboard-only navigation
+- Easy discoverability through help modal
+
+**Files Changed**: 3 files, 407 additions, 9 deletions
+**Build**: Successful (bundle size: 582KB)
 
 ### v0.2.0 (2025-11-13)
 **Major Improvements**:
