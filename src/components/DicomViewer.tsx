@@ -1160,6 +1160,8 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
           windowWidth={windowWidth[0]}
           onWindowLevelChange={(level) => setWindowLevel([level])}
           onWindowWidthChange={(width) => setWindowWidth([width])}
+          rtStruct={rtStruct}
+          structures={drawing.structures}
         />
       ) : (
         // Standard Single-Plane View
