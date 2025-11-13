@@ -1,17 +1,17 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { 
-  ZoomIn, 
-  ZoomOut, 
-  RotateCcw, 
-  Move, 
-  MousePointer, 
-  Paintbrush, 
-  Eraser, 
+import {
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  Move,
+  MousePointer,
+  Paintbrush,
+  Eraser,
   Download,
   Settings,
   Layers,
@@ -21,13 +21,21 @@ import {
   ArrowLeft,
   Scissors,
   Copy,
-  RotateCw
+  RotateCw,
+  Keyboard,
+  Undo,
+  Redo
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
 import { DrawingCanvas } from "@/components/DrawingCanvas";
 import { useDrawing, DrawingTool } from "@/hooks/useDrawing";
-import { BooleanOperation, Point2D } from "@/lib/contour-utils";
+import { Point2D, interpolateContours } from "@/lib/contour-utils";
+import { exportRTStruct } from "@/lib/rtstruct-export";
+import { worldToCanvas as worldToCanvasUtil, canvasToWorld as canvasToWorldUtil } from "@/lib/coordinate-utils";
+import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
+import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
+import { HUOverlay } from "@/components/HUOverlay";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -48,6 +56,8 @@ type ViewerTool = "select" | "pan" | "zoom" | "windowing";
 
 export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: DicomViewerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const { toast } = useToast();
 
   // Drawing system
@@ -61,6 +71,23 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [probThreshold, setProbThreshold] = useState([0.5]);
+
+  // Mouse interaction state
+  const [isDragging, setIsDragging] = useState(false);
+  const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
+
+  // Keyboard shortcuts help modal
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
+  // HU value display state
+  const [showHUOverlay, setShowHUOverlay] = useState(true);
+  const [showCrosshair, setShowCrosshair] = useState(false);
+  const [mouseCanvasPos, setMouseCanvasPos] = useState<{ x: number; y: number } | null>(null);
+  const [huInfo, setHUInfo] = useState<{
+    pixelX: number;
+    pixelY: number;
+    huValue: number;
+  } | null>(null);
   
   // RT Structure state - only include RT structures
   const [rtStructures, setRTStructures] = useState<RTStructure[]>(() => {
@@ -138,17 +165,21 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
     // Render the DICOM image
     try {
-      const tempCanvas = document.createElement('canvas');
+      // Reuse temporary canvas if possible
+      if (!tempCanvasRef.current) {
+        tempCanvasRef.current = document.createElement('canvas');
+      }
+      const tempCanvas = tempCanvasRef.current;
       const tempCtx = tempCanvas.getContext('2d');
-      
+
       if (tempCtx) {
         DicomProcessor.renderImageToCanvas(
-          tempCanvas, 
-          currentImage, 
-          windowLevel[0], 
+          tempCanvas,
+          currentImage,
+          windowLevel[0],
           windowWidth[0]
         );
-        
+
         ctx.drawImage(tempCanvas, imageX, imageY, drawWidth, drawHeight);
       }
     } catch (error) {
@@ -161,10 +192,16 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     // Render probability map overlay if available
     if (probabilityMap && probabilityMap[currentSlice]) {
       const slice = probabilityMap[currentSlice];
-      const overlayCanvas = document.createElement('canvas');
+
+      // Reuse overlay canvas if possible
+      if (!overlayCanvasRef.current) {
+        overlayCanvasRef.current = document.createElement('canvas');
+      }
+      const overlayCanvas = overlayCanvasRef.current;
       overlayCanvas.width = currentImage.width;
       overlayCanvas.height = currentImage.height;
       const octx = overlayCanvas.getContext('2d');
+
       if (octx) {
         const imageData = octx.createImageData(currentImage.width, currentImage.height);
         for (let i = 0; i < slice.length; i++) {
@@ -183,20 +220,14 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     }
 
     // Coordinate transformation functions
+    const config = {
+      canvasSize,
+      zoom,
+      pan
+    };
+
     const worldToCanvas = (worldX: number, worldY: number) => {
-      const imagePosition = currentImage.imagePosition || [0, 0, 0];
-      const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-      
-      const pixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
-      const pixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
-      
-      const scaleX = drawWidth / currentImage.width;
-      const scaleY = drawHeight / currentImage.height;
-      
-      return {
-        x: imageX + (pixelX * scaleX),
-        y: imageY + (pixelY * scaleY)
-      };
+      return worldToCanvasUtil(worldX, worldY, currentImage, config);
     };
 
     // Render RT structure contours
@@ -253,48 +284,23 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       });
     }
 
-    
+
   }, [currentSlice, rtStructures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawing, probabilityMap, probThreshold]);
+
+  // Note: Canvas refs are automatically cleaned up by React on unmount
 
   // Convert canvas coordinates to world coordinates for drawing
   const canvasToWorld = (canvasX: number, canvasY: number): Point2D => {
     const currentImage = ctImages[currentSlice];
     if (!currentImage) return { x: 0, y: 0 };
-    
-    const canvasSize = 800;
-    const imageAspect = currentImage.width / currentImage.height;
-    
-    let drawWidth = currentImage.width;
-    let drawHeight = currentImage.height;
-    
-    const maxSize = canvasSize * 0.95;
-    if (imageAspect > 1) {
-      drawWidth = maxSize;
-      drawHeight = drawWidth / imageAspect;
-    } else {
-      drawHeight = maxSize;
-      drawWidth = drawHeight * imageAspect;
-    }
-    
-    drawWidth *= zoom;
-    drawHeight *= zoom;
-    
-    const imageX = (canvasSize - drawWidth) / 2 + pan.x;
-    const imageY = (canvasSize - drawHeight) / 2 + pan.y;
-    
-    const imagePosition = currentImage.imagePosition || [0, 0, 0];
-    const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-    
-    const scaleX = drawWidth / currentImage.width;
-    const scaleY = drawHeight / currentImage.height;
-    
-    const pixelX = (canvasX - imageX) / scaleX;
-    const pixelY = (canvasY - imageY) / scaleY;
-    
-    return {
-      x: imagePosition[0] + (pixelX * pixelSpacing[0]),
-      y: imagePosition[1] + (pixelY * pixelSpacing[1])
+
+    const config = {
+      canvasSize: 800,
+      zoom,
+      pan
     };
+
+    return canvasToWorldUtil(canvasX, canvasY, currentImage, config);
   };
 
   // Handle wheel events for slice navigation
@@ -335,6 +341,105 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   const handleEraseAt = (point: Point2D) => {
     const worldPoint = canvasToWorld(point.x, point.y);
     drawing.eraseAt(worldPoint, currentSlice);
+  };
+
+  // Mouse event handlers for Pan and Windowing tools
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (viewerTool === "pan" || viewerTool === "windowing") {
+      setIsDragging(true);
+      setLastMousePos({ x: e.clientX, y: e.clientY });
+    }
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Update HU overlay position and value
+    const canvas = canvasRef.current;
+    if (canvas && showHUOverlay) {
+      const rect = canvas.getBoundingClientRect();
+      const canvasX = e.clientX - rect.left;
+      const canvasY = e.clientY - rect.top;
+
+      setMouseCanvasPos({ x: canvasX, y: canvasY });
+
+      // Convert canvas coordinates to pixel coordinates in the image
+      const currentImage = ctImages[currentSlice];
+      if (currentImage) {
+        const config = {
+          canvasSize: 800,
+          zoom,
+          pan,
+        };
+
+        const bounds = getImageBounds(currentImage, config);
+
+        // Check if mouse is within image bounds
+        if (
+          canvasX >= bounds.x &&
+          canvasX <= bounds.x + bounds.width &&
+          canvasY >= bounds.y &&
+          canvasY <= bounds.y + bounds.height
+        ) {
+          // Convert to pixel coordinates
+          const pixelX = ((canvasX - bounds.x) / bounds.width) * currentImage.width;
+          const pixelY = ((canvasY - bounds.y) / bounds.height) * currentImage.height;
+
+          // Get HU value
+          const huValue = DicomProcessor.getHUValueAtPixel(
+            currentImage,
+            pixelX,
+            pixelY
+          );
+
+          if (huValue !== null) {
+            setHUInfo({
+              pixelX: Math.floor(pixelX),
+              pixelY: Math.floor(pixelY),
+              huValue,
+            });
+          } else {
+            setHUInfo(null);
+          }
+        } else {
+          setHUInfo(null);
+        }
+      }
+    }
+
+    // Handle pan and windowing drag
+    if (!isDragging) return;
+
+    const deltaX = e.clientX - lastMousePos.x;
+    const deltaY = e.clientY - lastMousePos.y;
+
+    if (viewerTool === "pan") {
+      setPan((prev) => ({
+        x: prev.x + deltaX,
+        y: prev.y + deltaY,
+      }));
+    } else if (viewerTool === "windowing") {
+      // Horizontal movement adjusts window width
+      // Vertical movement adjusts window level
+      setWindowWidth((prev) => {
+        const newWidth = Math.max(1, prev[0] + deltaX * 2);
+        return [newWidth];
+      });
+      setWindowLevel((prev) => {
+        const newLevel = prev[0] - deltaY * 2; // Inverted for intuitive up/down
+        return [newLevel];
+      });
+    }
+
+    setLastMousePos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleCanvasMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleCanvasMouseLeave = () => {
+    setIsDragging(false);
+    setMouseCanvasPos(null);
+    setHUInfo(null);
   };
 
   // Tool change handlers
@@ -397,17 +502,36 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   };
 
   const handleDownload = () => {
-    toast({
-      title: "Export initiated",
-      description: "Generating DICOM RT Structure file...",
-    });
-    
-    setTimeout(() => {
+    try {
+      if (drawing.structures.length === 0) {
+        toast({
+          title: "No structures to export",
+          description: "Please create at least one structure before exporting",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      toast({
+        title: "Export initiated",
+        description: "Generating DICOM RT Structure file...",
+      });
+
+      // Export as JSON format (DICOM-RT representation)
+      exportRTStruct(drawing.structures, ctImages, 'json', rtStruct);
+
       toast({
         title: "Export complete",
         description: "RT Structure file downloaded successfully",
       });
-    }, 2000);
+    } catch (error) {
+      console.error('Export failed:', error);
+      toast({
+        title: "Export failed",
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+        variant: "destructive"
+      });
+    }
   };
 
   const resetView = () => {
@@ -423,52 +547,289 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
   const interpolateSlices = () => {
     if (drawing.activeStructureId) {
-      const activeStructure = drawing.structures.find(s => s.id === drawing.activeStructureId);
+      const activeStructureId = drawing.activeStructureId;
+      const activeStructure = drawing.structures.find(s => s.id === activeStructureId);
       if (activeStructure && activeStructure.contours.length >= 2) {
         // Find slices with contours
         const slicesWithContours = [...new Set(activeStructure.contours.map(c => c.sliceIndex))].sort((a, b) => a - b);
-        
+
         if (slicesWithContours.length >= 2) {
-          const startSlice = slicesWithContours[0];
-          const endSlice = slicesWithContours[slicesWithContours.length - 1];
-          const targetSlices = [];
-          
-          for (let i = startSlice + 1; i < endSlice; i++) {
-            if (!slicesWithContours.includes(i)) {
-              targetSlices.push(i);
+          let interpolatedCount = 0;
+
+          // Interpolate between consecutive pairs of slices with contours
+          for (let i = 0; i < slicesWithContours.length - 1; i++) {
+            const slice1 = slicesWithContours[i];
+            const slice2 = slicesWithContours[i + 1];
+
+            // Find the contours for these slices
+            const contour1 = activeStructure.contours.find(c => c.sliceIndex === slice1);
+            const contour2 = activeStructure.contours.find(c => c.sliceIndex === slice2);
+
+            if (contour1 && contour2) {
+              // Interpolate for all slices between slice1 and slice2
+              for (let targetSlice = slice1 + 1; targetSlice < slice2; targetSlice++) {
+                const interpolatedContour = interpolateContours(contour1, contour2, targetSlice);
+
+                if (interpolatedContour) {
+                  // Add the interpolated contour to the drawing
+                  drawing.addContourToStructure(
+                    activeStructureId,
+                    interpolatedContour
+                  );
+                  interpolatedCount++;
+                }
+              }
             }
           }
-          
-          if (targetSlices.length > 0) {
-            // Simplified interpolation - just copy the first contour to all target slices
-            const firstContour = activeStructure.contours[0];
-            targetSlices.forEach(slice => {
-              const interpolatedContour = {
-                id: `interpolated_${Date.now()}_${slice}`,
-                points: firstContour.points,
-                sliceIndex: slice,
-                structureId: drawing.activeStructureId!,
-                isClosed: true,
-                color: firstContour.color
-              };
-              
-              drawing.addStructure({
-                id: drawing.activeStructureId!,
-                name: activeStructure.name,
-                color: activeStructure.color,
-                visible: true
-              });
-            });
-            
+
+          if (interpolatedCount > 0) {
             toast({
               title: "Interpolation complete",
-              description: `Added contours to ${targetSlices.length} slices`,
+              description: `Added ${interpolatedCount} interpolated contours`,
+            });
+          } else {
+            toast({
+              title: "No interpolation needed",
+              description: "All intermediate slices already have contours",
             });
           }
         }
+      } else {
+        toast({
+          title: "Cannot interpolate",
+          description: "Need at least 2 contours to interpolate",
+          variant: "destructive"
+        });
       }
+    } else {
+      toast({
+        title: "No structure selected",
+        description: "Please select a structure first",
+        variant: "destructive"
+      });
     }
   };
+
+  // Define keyboard shortcuts
+  const keyboardShortcuts: KeyboardShortcut[] = useMemo(() => [
+    // Help
+    {
+      key: '?',
+      handler: () => setShowShortcutsHelp((prev) => !prev),
+      description: 'Show keyboard shortcuts help',
+      category: 'Help',
+    },
+    {
+      key: 'h',
+      handler: () => setShowShortcutsHelp((prev) => !prev),
+      description: 'Show keyboard shortcuts help',
+      category: 'Help',
+    },
+
+    // Tool Selection
+    {
+      key: 's',
+      handler: () => handleViewerToolChange('select'),
+      description: 'Select tool',
+      category: 'Tools',
+    },
+    {
+      key: 'b',
+      handler: () => handleDrawingToolChange('brush'),
+      description: 'Brush tool',
+      category: 'Tools',
+    },
+    {
+      key: 'e',
+      handler: () => handleDrawingToolChange('eraser'),
+      description: 'Eraser tool',
+      category: 'Tools',
+    },
+    {
+      key: 'p',
+      handler: () => handleViewerToolChange('pan'),
+      description: 'Pan tool',
+      category: 'Tools',
+    },
+    {
+      key: 'w',
+      handler: () => handleViewerToolChange('windowing'),
+      description: 'Window/Level tool',
+      category: 'Tools',
+    },
+
+    // Navigation
+    {
+      key: '[',
+      handler: () => {
+        setCurrentSlice((prev) => Math.max(0, prev - 1));
+      },
+      description: 'Previous slice',
+      category: 'Navigation',
+    },
+    {
+      key: ']',
+      handler: () => {
+        setCurrentSlice((prev) => Math.min(ctImages.length - 1, prev + 1));
+      },
+      description: 'Next slice',
+      category: 'Navigation',
+    },
+
+    // Zoom
+    {
+      key: '+',
+      handler: () => {
+        setZoom((prev) => Math.min(5, prev * 1.2));
+      },
+      description: 'Zoom in',
+      category: 'View',
+    },
+    {
+      key: '=',
+      handler: () => {
+        setZoom((prev) => Math.min(5, prev * 1.2));
+      },
+      description: 'Zoom in (alternate)',
+      category: 'View',
+    },
+    {
+      key: '-',
+      handler: () => {
+        setZoom((prev) => Math.max(0.1, prev * 0.8));
+      },
+      description: 'Zoom out',
+      category: 'View',
+    },
+    {
+      key: 'r',
+      handler: resetView,
+      description: 'Reset view',
+      category: 'View',
+    },
+    {
+      key: 'h',
+      ctrl: true,
+      handler: () => {
+        setShowHUOverlay((prev) => !prev);
+      },
+      description: 'Toggle HU value overlay',
+      category: 'View',
+    },
+    {
+      key: 'x',
+      handler: () => {
+        setShowCrosshair((prev) => !prev);
+      },
+      description: 'Toggle crosshair',
+      category: 'View',
+    },
+
+    // Actions
+    {
+      key: 'z',
+      ctrl: true,
+      handler: () => {
+        if (drawing.canUndo) {
+          drawing.undo();
+          toast({
+            title: 'Undo',
+            description: 'Last action has been undone',
+          });
+        }
+      },
+      description: 'Undo last action',
+      category: 'Actions',
+    },
+    {
+      key: 'y',
+      ctrl: true,
+      handler: () => {
+        if (drawing.canRedo) {
+          drawing.redo();
+          toast({
+            title: 'Redo',
+            description: 'Last action has been redone',
+          });
+        }
+      },
+      description: 'Redo last action',
+      category: 'Actions',
+    },
+    {
+      key: 'z',
+      ctrl: true,
+      shift: true,
+      handler: () => {
+        if (drawing.canRedo) {
+          drawing.redo();
+          toast({
+            title: 'Redo',
+            description: 'Last action has been redone',
+          });
+        }
+      },
+      description: 'Redo last action (alternate)',
+      category: 'Actions',
+    },
+    {
+      key: 's',
+      ctrl: true,
+      handler: () => {
+        handleDownload();
+      },
+      description: 'Export structures',
+      category: 'Actions',
+    },
+    {
+      key: 'escape',
+      handler: () => {
+        if (drawing.currentTool === 'polygon' && drawing.isDrawing) {
+          drawing.cancelDrawing();
+          toast({
+            title: 'Drawing cancelled',
+            description: 'Polygon drawing has been cancelled',
+          });
+        }
+      },
+      description: 'Cancel current drawing',
+      category: 'Actions',
+    },
+    {
+      key: 'i',
+      handler: interpolateSlices,
+      description: 'Interpolate contours',
+      category: 'Actions',
+    },
+
+    // Quick structure selection (1-9)
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => ({
+      key: num.toString(),
+      handler: () => {
+        const structures = drawing.structures;
+        if (structures[num - 1]) {
+          drawing.setActiveStructure(structures[num - 1].id);
+          if (drawing.currentTool === 'select') {
+            drawing.setTool('brush');
+          }
+        }
+      },
+      description: `Select structure ${num}`,
+      category: 'Quick Selection',
+    })),
+  ], [
+    drawing,
+    handleViewerToolChange,
+    handleDrawingToolChange,
+    handleDownload,
+    resetView,
+    interpolateSlices,
+    ctImages.length,
+    toast,
+  ]);
+
+  // Use keyboard shortcuts
+  useKeyboardShortcuts(keyboardShortcuts, { enabled: true });
 
   return (
     <div className="min-h-screen bg-background flex animate-fade-in">
@@ -490,6 +851,46 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                   Back
                 </Button>
               )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowShortcutsHelp(true)}
+                title="Keyboard shortcuts (? or H)"
+              >
+                <Keyboard className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  drawing.undo();
+                  toast({
+                    title: 'Undo',
+                    description: 'Last action has been undone',
+                  });
+                }}
+                disabled={!drawing.canUndo}
+                title="Undo (Ctrl+Z)"
+              >
+                <Undo className="w-4 h-4" />
+                Undo
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  drawing.redo();
+                  toast({
+                    title: 'Redo',
+                    description: 'Last action has been redone',
+                  });
+                }}
+                disabled={!drawing.canRedo}
+                title="Redo (Ctrl+Y)"
+              >
+                <Redo className="w-4 h-4" />
+                Redo
+              </Button>
               <Button variant="outline" size="sm" onClick={resetView}>
                 <RotateCcw className="w-4 h-4" />
                 Reset
@@ -584,9 +985,20 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                   imageRendering: "pixelated",
                   width: "800px",
                   height: "800px",
-                  border: "2px solid #333"
+                  border: "2px solid #333",
+                  cursor: 
+                    viewerTool === "pan" ? "grab" : 
+                    viewerTool === "windowing" ? "crosshair" :
+                    drawing.currentTool === "brush" ? "crosshair" :
+                    drawing.currentTool === "eraser" ? "cell" :
+                    drawing.currentTool === "polygon" ? "crosshair" :
+                    "default"
                 }}
                 onWheel={handleWheel}
+                onMouseDown={handleCanvasMouseDown}
+                onMouseMove={handleCanvasMouseMove}
+                onMouseUp={handleCanvasMouseUp}
+                onMouseLeave={handleCanvasMouseLeave}
               />
               
               <DrawingCanvas
@@ -683,7 +1095,22 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                 onEraseAt={handleEraseAt}
                 onWheel={handleWheel}
               />
-              
+
+              {/* HU Value Overlay */}
+              {mouseCanvasPos && huInfo && (
+                <HUOverlay
+                  visible={showHUOverlay}
+                  x={mouseCanvasPos.x}
+                  y={mouseCanvasPos.y}
+                  pixelX={huInfo.pixelX}
+                  pixelY={huInfo.pixelY}
+                  huValue={huInfo.huValue}
+                  sliceNumber={currentSlice}
+                  totalSlices={ctImages.length}
+                  showCrosshair={showCrosshair}
+                />
+              )}
+
               <div className="absolute bottom-2 left-2 bg-black/80 text-white p-2 rounded text-xs">
                 {viewerTool === "select" && drawing.currentTool === "select" && "Mouse wheel: Navigate slices"}
                 {viewerTool === "pan" && "Drag: Pan image | Wheel: Navigate slices"}
@@ -898,6 +1325,13 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
           </div>
         </div>
       </div>
+
+      {/* Keyboard Shortcuts Help Modal */}
+      <KeyboardShortcutsHelp
+        open={showShortcutsHelp}
+        onOpenChange={setShowShortcutsHelp}
+        shortcuts={keyboardShortcuts}
+      />
     </div>
   );
 };

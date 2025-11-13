@@ -13,10 +13,14 @@ export interface DicomImage {
   rescaleSlope: number;
   seriesInstanceUID: string;
   sopInstanceUID: string;
+  sopClassUID?: string;
   imagePosition?: number[];
+  imageOrientation?: number[];
   sliceLocation?: number;
   sliceThickness?: number;
   pixelSpacing?: number[];
+  frameOfReferenceUID?: string;
+  studyInstanceUID?: string;
 }
 
 export interface DicomStructure {
@@ -58,9 +62,16 @@ export class DicomProcessor {
       // Series and instance information
       const seriesInstanceUID = dataSet.string('x0020000e') || '';
       const sopInstanceUID = dataSet.string('x00080018') || '';
+      const sopClassUID = dataSet.string('x00080016') || undefined;
+      const frameOfReferenceUID = dataSet.string('x00200052') || undefined;
+      const studyInstanceUID = dataSet.string('x0020000d') || undefined;
 
       // Image position, slice location, and spacing information
       const imagePosition = dataSet.string('x00200032')?.split('\\').map(Number);
+      const imageOrientation = dataSet
+        .string('x00200037')
+        ?.split('\\')
+        .map(Number);
       const sliceLocation = dataSet.floatString('x00201041');
       const sliceThickness = dataSet.floatString('x00180050');
       const pixelSpacing = dataSet.string('x00280030')?.split('\\').map(Number);
@@ -97,10 +108,14 @@ export class DicomProcessor {
         rescaleSlope,
         seriesInstanceUID,
         sopInstanceUID,
+        sopClassUID,
         imagePosition,
+        imageOrientation,
         sliceLocation,
         sliceThickness,
         pixelSpacing,
+        frameOfReferenceUID,
+        studyInstanceUID,
       };
     } catch (error) {
       console.error('Error parsing DICOM file:', error);
@@ -258,5 +273,165 @@ export class DicomProcessor {
     }
 
     ctx.putImageData(imageData, 0, 0);
+  }
+
+  /**
+   * Match RT Structure contours to CT image slices based on Z-coordinates.
+   * This improves upon the default sliceIndex: 0 by calculating proper indices.
+   * 
+   * Note: If no slice is found within tolerance (half slice thickness), the function
+   * will still return the closest slice but log a warning. This behavior ensures
+   * contours are always assigned to a slice for visualization, even if the match
+   * is imperfect (e.g., due to slight misalignment in imaging data).
+   */
+  static matchContoursToSlices(
+    rtStruct: DicomRTStruct,
+    ctImages: DicomImage[]
+  ): DicomRTStruct {
+    if (!rtStruct || !ctImages || ctImages.length === 0) {
+      return rtStruct;
+    }
+
+    // Create a copy of the RT structure to avoid mutation
+    const matched: DicomRTStruct = {
+      structures: rtStruct.structures.map(structure => ({
+        ...structure,
+        contours: structure.contours.map(contour => {
+          if (contour.points.length === 0) {
+            return { ...contour, sliceIndex: 0 };
+          }
+
+          // Get the Z coordinate from the first point of the contour
+          const contourZ = contour.points[0][2];
+
+          // Find the closest CT slice by Z coordinate
+          let closestSliceIndex = 0;
+          let minDistance = Infinity;
+
+          ctImages.forEach((image, index) => {
+            const sliceZ = image.sliceLocation ?? image.imagePosition?.[2] ?? 0;
+            const distance = Math.abs(contourZ - sliceZ);
+
+            if (distance < minDistance) {
+              minDistance = distance;
+              closestSliceIndex = index;
+            }
+          });
+
+          // Check if the match is within a reasonable tolerance (half slice thickness)
+          const matchedImage = ctImages[closestSliceIndex];
+          const tolerance = (matchedImage.sliceThickness || 1.0) / 2;
+
+          if (minDistance <= tolerance) {
+            return { ...contour, sliceIndex: closestSliceIndex };
+          } else {
+            // If no good match, keep original index but log warning
+            console.warn(
+              `Contour Z=${contourZ} is not within tolerance of any CT slice (min distance: ${minDistance})`
+            );
+            return { ...contour, sliceIndex: closestSliceIndex };
+          }
+        }),
+      })),
+      frameOfReference: rtStruct.frameOfReference,
+    };
+
+    return matched;
+  }
+
+  /**
+   * Get Hounsfield Unit value at a specific pixel coordinate
+   * @param image - DICOM image
+   * @param x - Pixel X coordinate (0-based)
+   * @param y - Pixel Y coordinate (0-based)
+   * @returns HU value or null if out of bounds
+   */
+  static getHUValueAtPixel(
+    image: DicomImage,
+    x: number,
+    y: number
+  ): number | null {
+    // Check bounds
+    if (x < 0 || x >= image.width || y < 0 || y >= image.height) {
+      return null;
+    }
+
+    // Calculate pixel index
+    const pixelIndex = Math.floor(y) * image.width + Math.floor(x);
+
+    // Check if index is valid
+    if (pixelIndex < 0 || pixelIndex >= image.pixelData.length) {
+      return null;
+    }
+
+    // Get raw pixel value
+    const rawValue = image.pixelData[pixelIndex];
+
+    // Apply rescale slope and intercept to get HU value
+    const huValue = rawValue * image.rescaleSlope + image.rescaleIntercept;
+
+    return huValue;
+  }
+
+  /**
+   * Get detailed pixel information at coordinates
+   * @param image - DICOM image
+   * @param x - Pixel X coordinate
+   * @param y - Pixel Y coordinate
+   * @returns Pixel info object or null if out of bounds
+   */
+  static getPixelInfo(
+    image: DicomImage,
+    x: number,
+    y: number
+  ): {
+    x: number;
+    y: number;
+    hu: number;
+    raw: number;
+    worldX?: number;
+    worldY?: number;
+    worldZ?: number;
+  } | null {
+    const hu = this.getHUValueAtPixel(image, x, y);
+    if (hu === null) return null;
+
+    const pixelIndex = Math.floor(y) * image.width + Math.floor(x);
+    const raw = image.pixelData[pixelIndex];
+
+    // Calculate world coordinates if available
+    let worldX, worldY, worldZ;
+    if (image.imagePosition && image.pixelSpacing) {
+      const position = image.imagePosition;
+      const spacing = image.pixelSpacing;
+      const orientation = image.imageOrientation || [1, 0, 0, 0, 1, 0];
+
+      // Row and column direction cosines
+      const rowCosines = [orientation[0], orientation[1], orientation[2]];
+      const colCosines = [orientation[3], orientation[4], orientation[5]];
+
+      worldX =
+        position[0] +
+        x * spacing[0] * rowCosines[0] +
+        y * spacing[1] * colCosines[0];
+      worldY =
+        position[1] +
+        x * spacing[0] * rowCosines[1] +
+        y * spacing[1] * colCosines[1];
+      worldZ =
+        position[2] +
+        x * spacing[0] * rowCosines[2] +
+        y * spacing[1] * colCosines[2];
+    }
+
+    return {
+      x: Math.floor(x),
+      y: Math.floor(y),
+      hu,
+      raw,
+      worldX,
+      worldY,
+      worldZ,
+    };
   }
 }
