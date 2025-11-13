@@ -4,14 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { 
-  ZoomIn, 
-  ZoomOut, 
-  RotateCcw, 
-  Move, 
-  MousePointer, 
-  Paintbrush, 
-  Eraser, 
+import {
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  Move,
+  MousePointer,
+  Paintbrush,
+  Eraser,
   Download,
   Settings,
   Layers,
@@ -21,7 +21,8 @@ import {
   ArrowLeft,
   Scissors,
   Copy,
-  RotateCw
+  RotateCw,
+  Keyboard
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
@@ -30,6 +31,8 @@ import { useDrawing, DrawingTool } from "@/hooks/useDrawing";
 import { BooleanOperation, Point2D, interpolateContours } from "@/lib/contour-utils";
 import { exportRTStruct } from "@/lib/rtstruct-export";
 import { worldToCanvas as worldToCanvasUtil, canvasToWorld as canvasToWorldUtil, getImageBounds } from "@/lib/coordinate-utils";
+import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
+import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -69,6 +72,9 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   // Mouse interaction state
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
+
+  // Keyboard shortcuts help modal
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   
   // RT Structure state - only include RT structures
   const [rtStructures, setRTStructures] = useState<RTStructure[]>(() => {
@@ -538,6 +544,164 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     }
   };
 
+  // Define keyboard shortcuts
+  const keyboardShortcuts: KeyboardShortcut[] = useMemo(() => [
+    // Help
+    {
+      key: '?',
+      handler: () => setShowShortcutsHelp((prev) => !prev),
+      description: 'Show keyboard shortcuts help',
+      category: 'Help',
+    },
+    {
+      key: 'h',
+      handler: () => setShowShortcutsHelp((prev) => !prev),
+      description: 'Show keyboard shortcuts help',
+      category: 'Help',
+    },
+
+    // Tool Selection
+    {
+      key: 's',
+      handler: () => handleViewerToolChange('select'),
+      description: 'Select tool',
+      category: 'Tools',
+    },
+    {
+      key: 'b',
+      handler: () => handleDrawingToolChange('brush'),
+      description: 'Brush tool',
+      category: 'Tools',
+    },
+    {
+      key: 'e',
+      handler: () => handleDrawingToolChange('eraser'),
+      description: 'Eraser tool',
+      category: 'Tools',
+    },
+    {
+      key: 'p',
+      handler: () => handleViewerToolChange('pan'),
+      description: 'Pan tool',
+      category: 'Tools',
+    },
+    {
+      key: 'w',
+      handler: () => handleViewerToolChange('windowing'),
+      description: 'Window/Level tool',
+      category: 'Tools',
+    },
+
+    // Navigation
+    {
+      key: '[',
+      handler: () => {
+        setCurrentSlice((prev) => Math.max(0, prev - 1));
+      },
+      description: 'Previous slice',
+      category: 'Navigation',
+    },
+    {
+      key: ']',
+      handler: () => {
+        setCurrentSlice((prev) => Math.min(ctImages.length - 1, prev + 1));
+      },
+      description: 'Next slice',
+      category: 'Navigation',
+    },
+
+    // Zoom
+    {
+      key: '+',
+      handler: () => {
+        setZoom((prev) => Math.min(5, prev * 1.2));
+      },
+      description: 'Zoom in',
+      category: 'View',
+    },
+    {
+      key: '=',
+      handler: () => {
+        setZoom((prev) => Math.min(5, prev * 1.2));
+      },
+      description: 'Zoom in (alternate)',
+      category: 'View',
+    },
+    {
+      key: '-',
+      handler: () => {
+        setZoom((prev) => Math.max(0.1, prev * 0.8));
+      },
+      description: 'Zoom out',
+      category: 'View',
+    },
+    {
+      key: 'r',
+      handler: resetView,
+      description: 'Reset view',
+      category: 'View',
+    },
+
+    // Actions
+    {
+      key: 's',
+      ctrl: true,
+      handler: () => {
+        handleDownload();
+      },
+      description: 'Export structures',
+      category: 'Actions',
+    },
+    {
+      key: 'escape',
+      handler: () => {
+        if (drawing.currentTool === 'polygon' && drawing.isDrawing) {
+          drawing.cancelDrawing();
+          toast({
+            title: 'Drawing cancelled',
+            description: 'Polygon drawing has been cancelled',
+          });
+        }
+      },
+      description: 'Cancel current drawing',
+      category: 'Actions',
+    },
+    {
+      key: 'i',
+      handler: interpolateSlices,
+      description: 'Interpolate contours',
+      category: 'Actions',
+    },
+
+    // Quick structure selection (1-9)
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => ({
+      key: num.toString(),
+      handler: () => {
+        const structures = drawing.structures;
+        if (structures[num - 1]) {
+          drawing.setActiveStructure(structures[num - 1].id);
+          if (drawing.currentTool === 'select') {
+            drawing.setTool('brush');
+          }
+        }
+      },
+      description: `Select structure ${num}`,
+      category: 'Quick Selection',
+    })),
+  ], [
+    drawing,
+    handleViewerToolChange,
+    handleDrawingToolChange,
+    handleDownload,
+    resetView,
+    interpolateSlices,
+    ctImages.length,
+    toast,
+  ]);
+
+  // Use keyboard shortcuts
+  useKeyboardShortcuts(keyboardShortcuts, { enabled: true });
+
   return (
     <div className="min-h-screen bg-background flex animate-fade-in">
       {/* Main Viewer */}
@@ -558,6 +722,14 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                   Back
                 </Button>
               )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowShortcutsHelp(true)}
+                title="Keyboard shortcuts (? or H)"
+              >
+                <Keyboard className="w-4 h-4" />
+              </Button>
               <Button variant="outline" size="sm" onClick={resetView}>
                 <RotateCcw className="w-4 h-4" />
                 Reset
@@ -971,6 +1143,13 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
           </div>
         </div>
       </div>
+
+      {/* Keyboard Shortcuts Help Modal */}
+      <KeyboardShortcutsHelp
+        open={showShortcutsHelp}
+        onOpenChange={setShowShortcutsHelp}
+        shortcuts={keyboardShortcuts}
+      />
     </div>
   );
 };
