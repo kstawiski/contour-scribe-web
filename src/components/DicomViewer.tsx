@@ -289,6 +289,30 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
   // Note: Canvas refs are automatically cleaned up by React on unmount
 
+  // Helper function to get image bounds on canvas
+  const getImageBounds = (image: DicomImage, config: { canvasSize: number; zoom: number; pan: { x: number; y: number } }) => {
+    const imageAspect = image.width / image.height;
+    let drawWidth = image.width;
+    let drawHeight = image.height;
+
+    const maxSize = config.canvasSize * 0.95;
+    if (imageAspect > 1) {
+      drawWidth = maxSize;
+      drawHeight = drawWidth / imageAspect;
+    } else {
+      drawHeight = maxSize;
+      drawWidth = drawHeight * imageAspect;
+    }
+
+    drawWidth *= config.zoom;
+    drawHeight *= config.zoom;
+
+    const x = (config.canvasSize - drawWidth) / 2 + config.pan.x;
+    const y = (config.canvasSize - drawHeight) / 2 + config.pan.y;
+
+    return { x, y, width: drawWidth, height: drawHeight };
+  };
+
   // Convert canvas coordinates to world coordinates for drawing
   const canvasToWorld = (canvasX: number, canvasY: number): Point2D => {
     const currentImage = ctImages[currentSlice];
@@ -832,151 +856,150 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   useKeyboardShortcuts(keyboardShortcuts, { enabled: true });
 
   return (
-    <div className="min-h-screen bg-background flex animate-fade-in">
-      {/* Main Viewer */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="bg-card border-b border-border p-4">
-          <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-background flex flex-col animate-fade-in">
+      {/* Compact Header */}
+      <div className="bg-card border-b border-border px-4 py-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            {onBack && (
+              <Button variant="ghost" size="sm" onClick={onBack} title="Back to file selection">
+                <ArrowLeft className="w-4 h-4 mr-1" />
+                Back
+              </Button>
+            )}
             <div>
-              <h2 className="text-xl font-semibold text-foreground">DICOM Viewer</h2>
-              <p className="text-muted-foreground text-sm">
-                CT Series • {ctImages.length} slices • {rtStruct ? "RT Structure loaded" : "No RT Structure"}
+              <h2 className="text-lg font-semibold text-foreground">DicomEdit</h2>
+              <p className="text-muted-foreground text-xs">
+                {ctImages.length} slices {rtStruct ? "• RT Structure loaded" : ""}
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              {onBack && (
-                <Button variant="outline" size="sm" onClick={onBack}>
-                  <ArrowLeft className="w-4 h-4" />
-                  Back
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowShortcutsHelp(true)}
-                title="Keyboard shortcuts (? or H)"
-              >
-                <Keyboard className="w-4 h-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  drawing.undo();
-                  toast({
-                    title: 'Undo',
-                    description: 'Last action has been undone',
-                  });
-                }}
-                disabled={!drawing.canUndo}
-                title="Undo (Ctrl+Z)"
-              >
-                <Undo className="w-4 h-4" />
-                Undo
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  drawing.redo();
-                  toast({
-                    title: 'Redo',
-                    description: 'Last action has been redone',
-                  });
-                }}
-                disabled={!drawing.canRedo}
-                title="Redo (Ctrl+Y)"
-              >
-                <Redo className="w-4 h-4" />
-                Redo
-              </Button>
-              <Button variant="outline" size="sm" onClick={resetView}>
-                <RotateCcw className="w-4 h-4" />
-                Reset
-              </Button>
-              <Button variant="medical" size="sm" onClick={handleDownload}>
-                <Download className="w-4 h-4" />
-                Export
-              </Button>
-            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowShortcutsHelp(true)}
+              title="Keyboard shortcuts (?)"
+            >
+              <Keyboard className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                drawing.undo();
+                toast({
+                  title: 'Undo',
+                  description: 'Last action has been undone',
+                });
+              }}
+              disabled={!drawing.canUndo}
+              title="Undo (Ctrl+Z)"
+            >
+              <Undo className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                drawing.redo();
+                toast({
+                  title: 'Redo',
+                  description: 'Last action has been redone',
+                });
+              }}
+              disabled={!drawing.canRedo}
+              title="Redo (Ctrl+Y)"
+            >
+              <Redo className="w-4 h-4" />
+            </Button>
+            <Button variant="outline" size="sm" onClick={resetView} title="Reset view (R)">
+              <RotateCcw className="w-4 h-4" />
+            </Button>
+            <Button variant="medical" size="sm" onClick={handleDownload} title="Export structures (Ctrl+S)">
+              <Download className="w-4 h-4 mr-1" />
+              Export
+            </Button>
           </div>
         </div>
+      </div>
 
-        {/* Toolbar */}
-        <div className="bg-card border-b border-border p-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1 border border-border rounded-md p-1">
-              <Button
-                variant={viewerTool === "select" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => handleViewerToolChange("select")}
-              >
-                <MousePointer className="w-4 h-4" />
-              </Button>
-              <Button
-                variant={viewerTool === "pan" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => handleViewerToolChange("pan")}
-              >
-                <Move className="w-4 h-4" />
-              </Button>
-              <Button
-                variant={viewerTool === "zoom" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => handleViewerToolChange("zoom")}
-              >
-                <ZoomIn className="w-4 h-4" />
-              </Button>
-              <Button
-                variant={viewerTool === "windowing" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => handleViewerToolChange("windowing")}
-              >
-                <Settings className="w-4 h-4" />
-              </Button>
-            </div>
+      {/* Main Content Area */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Tool Sidebar */}
+        <div className="w-16 bg-card border-r border-border flex flex-col p-2 gap-2">
+          <div className="text-xs text-muted-foreground text-center mb-2 font-medium">Tools</div>
 
-            <Separator orientation="vertical" className="h-8" />
+          {/* Viewer Tools */}
+          <Button
+            variant={viewerTool === "select" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => handleViewerToolChange("select")}
+            className="w-full h-12 flex flex-col items-center gap-1 p-1"
+            title="Select tool (S) - Default navigation"
+          >
+            <MousePointer className="w-5 h-5" />
+            <span className="text-xs">Select</span>
+          </Button>
+          <Button
+            variant={viewerTool === "pan" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => handleViewerToolChange("pan")}
+            className="w-full h-12 flex flex-col items-center gap-1 p-1"
+            title="Pan tool (P) - Drag to move image"
+          >
+            <Move className="w-5 h-5" />
+            <span className="text-xs">Pan</span>
+          </Button>
+          <Button
+            variant={viewerTool === "windowing" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => handleViewerToolChange("windowing")}
+            className="w-full h-12 flex flex-col items-center gap-1 p-1"
+            title="Window/Level tool (W) - Drag to adjust brightness/contrast"
+          >
+            <Settings className="w-5 h-5" />
+            <span className="text-xs">W/L</span>
+          </Button>
 
-            <div className="flex items-center gap-1 border border-border rounded-md p-1">
-              <Button
-                variant={drawing.currentTool === "brush" ? "medical" : "ghost"}
-                size="sm"
-                onClick={() => handleDrawingToolChange("brush")}
-              >
-                <Paintbrush className="w-4 h-4" />
-              </Button>
-              <Button
-                variant={drawing.currentTool === "eraser" ? "destructive" : "ghost"}
-                size="sm"
-                onClick={() => handleDrawingToolChange("eraser")}
-              >
-                <Eraser className="w-4 h-4" />
-              </Button>
-              <Button
-                variant={drawing.currentTool === "polygon" ? "medical" : "ghost"}
-                size="sm"
-                onClick={() => handleDrawingToolChange("polygon")}
-              >
-                <Scissors className="w-4 h-4" />
-              </Button>
-            </div>
+          <Separator className="my-2" />
 
-            <Separator orientation="vertical" className="h-8" />
-
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Tool:</span>
-              <Badge variant="secondary" className="capitalize">
-                {drawing.currentTool}
-              </Badge>
-            </div>
-          </div>
+          {/* Drawing Tools */}
+          <Button
+            variant={drawing.currentTool === "brush" ? "medical" : "ghost"}
+            size="sm"
+            onClick={() => handleDrawingToolChange("brush")}
+            className="w-full h-12 flex flex-col items-center gap-1 p-1"
+            title="Brush tool (B) - Draw contours"
+          >
+            <Paintbrush className="w-5 h-5" />
+            <span className="text-xs">Brush</span>
+          </Button>
+          <Button
+            variant={drawing.currentTool === "polygon" ? "medical" : "ghost"}
+            size="sm"
+            onClick={() => handleDrawingToolChange("polygon")}
+            className="w-full h-12 flex flex-col items-center gap-1 p-1"
+            title="Polygon tool - Click to add points"
+          >
+            <Scissors className="w-5 h-5" />
+            <span className="text-xs">Polygon</span>
+          </Button>
+          <Button
+            variant={drawing.currentTool === "eraser" ? "destructive" : "ghost"}
+            size="sm"
+            onClick={() => handleDrawingToolChange("eraser")}
+            className="w-full h-12 flex flex-col items-center gap-1 p-1"
+            title="Eraser tool (E) - Remove contours"
+          >
+            <Eraser className="w-5 h-5" />
+            <span className="text-xs">Erase</span>
+          </Button>
         </div>
 
-        {/* Viewer Canvas */}
-        <div className="flex-1 flex">
-          <div className="flex-1 bg-black flex items-center justify-center p-4">
+        {/* Main Viewer Canvas */}
+        <div className="flex-1 bg-black flex flex-col">
+          <div className="flex-1 flex items-center justify-center p-2">
             <div className="relative">
               <canvas
                 ref={canvasRef}
@@ -986,8 +1009,8 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                   width: "800px",
                   height: "800px",
                   border: "2px solid #333",
-                  cursor: 
-                    viewerTool === "pan" ? "grab" : 
+                  cursor:
+                    viewerTool === "pan" ? "grab" :
                     viewerTool === "windowing" ? "crosshair" :
                     drawing.currentTool === "brush" ? "crosshair" :
                     drawing.currentTool === "eraser" ? "cell" :
@@ -1000,7 +1023,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                 onMouseUp={handleCanvasMouseUp}
                 onMouseLeave={handleCanvasMouseLeave}
               />
-              
+
               <DrawingCanvas
                 width={800}
                 height={800}
@@ -1009,13 +1032,13 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                   points: contour.points.map(worldPoint => {
                     const currentImage = ctImages[currentSlice];
                     if (!currentImage) return { x: 0, y: 0 };
-                    
+
                     const canvasSize = 800;
                     const imageAspect = currentImage.width / currentImage.height;
-                    
+
                     let drawWidth = currentImage.width;
                     let drawHeight = currentImage.height;
-                    
+
                     const maxSize = canvasSize * 0.95;
                     if (imageAspect > 1) {
                       drawWidth = maxSize;
@@ -1024,22 +1047,22 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                       drawHeight = maxSize;
                       drawWidth = drawHeight * imageAspect;
                     }
-                    
+
                     drawWidth *= zoom;
                     drawHeight *= zoom;
-                    
+
                     const imageX = (canvasSize - drawWidth) / 2 + pan.x;
                     const imageY = (canvasSize - drawHeight) / 2 + pan.y;
-                    
+
                     const imagePosition = currentImage.imagePosition || [0, 0, 0];
                     const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-                    
+
                     const pixelX = (worldPoint.x - imagePosition[0]) / pixelSpacing[0];
                     const pixelY = (worldPoint.y - imagePosition[1]) / pixelSpacing[1];
-                    
+
                     const scaleX = drawWidth / currentImage.width;
                     const scaleY = drawHeight / currentImage.height;
-                    
+
                     return {
                       x: imageX + (pixelX * scaleX),
                       y: imageY + (pixelY * scaleY)
@@ -1049,13 +1072,13 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                 currentPath={drawing.currentPath.map(worldPoint => {
                   const currentImage = ctImages[currentSlice];
                   if (!currentImage) return { x: 0, y: 0 };
-                  
+
                   const canvasSize = 800;
                   const imageAspect = currentImage.width / currentImage.height;
-                  
+
                   let drawWidth = currentImage.width;
                   let drawHeight = currentImage.height;
-                  
+
                   const maxSize = canvasSize * 0.95;
                   if (imageAspect > 1) {
                     drawWidth = maxSize;
@@ -1064,22 +1087,22 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                     drawHeight = maxSize;
                     drawWidth = drawHeight * imageAspect;
                   }
-                  
+
                   drawWidth *= zoom;
                   drawHeight *= zoom;
-                  
+
                   const imageX = (canvasSize - drawWidth) / 2 + pan.x;
                   const imageY = (canvasSize - drawHeight) / 2 + pan.y;
-                  
+
                   const imagePosition = currentImage.imagePosition || [0, 0, 0];
                   const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-                  
+
                   const pixelX = (worldPoint.x - imagePosition[0]) / pixelSpacing[0];
                   const pixelY = (worldPoint.y - imagePosition[1]) / pixelSpacing[1];
-                  
+
                   const scaleX = drawWidth / currentImage.width;
                   const scaleY = drawHeight / currentImage.height;
-                  
+
                   return {
                     x: imageX + (pixelX * scaleX),
                     y: imageY + (pixelY * scaleY)
@@ -1111,217 +1134,255 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                 />
               )}
 
-              <div className="absolute bottom-2 left-2 bg-black/80 text-white p-2 rounded text-xs">
-                {viewerTool === "select" && drawing.currentTool === "select" && "Mouse wheel: Navigate slices"}
-                {viewerTool === "pan" && "Drag: Pan image | Wheel: Navigate slices"}
-                {viewerTool === "zoom" && "Wheel: Zoom in/out"}
-                {viewerTool === "windowing" && "Drag: Adjust window/level"}
-                {drawing.currentTool === "brush" && "Click/Drag: Draw contour | Wheel: Navigate slices"}
-                {drawing.currentTool === "eraser" && "Click/Drag: Erase contours | Wheel: Navigate slices"}
-                {drawing.currentTool === "polygon" && "Click: Add points, double-click: Close polygon"}
+              <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1.5 rounded text-xs">
+                {viewerTool === "select" && drawing.currentTool === "select" && "🖱️ Scroll: Navigate slices"}
+                {viewerTool === "pan" && "🖱️ Drag: Pan • Scroll: Navigate"}
+                {viewerTool === "zoom" && "🖱️ Scroll: Zoom in/out"}
+                {viewerTool === "windowing" && "🖱️ Drag: Adjust brightness/contrast"}
+                {drawing.currentTool === "brush" && "🖱️ Draw contour • Scroll: Navigate"}
+                {drawing.currentTool === "eraser" && "🖱️ Erase contours • Scroll: Navigate"}
+                {drawing.currentTool === "polygon" && "🖱️ Click: Add points • Double-click: Finish"}
               </div>
             </div>
           </div>
 
-          {/* Controls Panel */}
-          <div className="w-80 bg-card border-l border-border p-4 space-y-6">
-            {/* Slice Navigation */}
-            <div>
-              <h3 className="font-medium text-foreground mb-3">Slice Navigation</h3>
-              <div className="space-y-3">
-                <div className="text-center">
-                  <span className="text-sm text-muted-foreground">
-                    {currentSlice + 1} / {ctImages.length}
-                  </span>
-                </div>
+          {/* Bottom Slice Navigation Bar - PROMINENT */}
+          <div className="bg-card border-t-2 border-primary/50 p-4">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentSlice(0)}
+                  disabled={currentSlice === 0}
+                  title="First slice"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <ArrowLeft className="w-4 h-4 -ml-3" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentSlice(prev => Math.max(0, prev - 1))}
+                  disabled={currentSlice === 0}
+                  title="Previous slice ([)"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </Button>
+              </div>
+
+              <div className="flex-1 flex items-center gap-4">
                 <Slider
                   value={[currentSlice]}
                   onValueChange={([value]) => setCurrentSlice(value)}
                   max={ctImages.length - 1}
                   step={1}
-                  className="w-full"
+                  className="flex-1"
                 />
+                <div className="text-sm font-medium text-foreground min-w-[80px] text-center bg-muted px-3 py-1 rounded">
+                  {currentSlice + 1} / {ctImages.length}
+                </div>
               </div>
-            </div>
 
-            {/* Image Controls */}
-            <div>
-              <h3 className="font-medium text-foreground mb-3">Image Controls</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm text-muted-foreground">Window Level</label>
-                  <Slider
-                    value={windowLevel}
-                    onValueChange={setWindowLevel}
-                    min={-1000}
-                    max={3000}
-                    step={10}
-                    className="mt-2"
-                  />
-                  <span className="text-xs text-muted-foreground">{windowLevel[0]}</span>
-                </div>
-                <div>
-                  <label className="text-sm text-muted-foreground">Window Width</label>
-                  <Slider
-                    value={windowWidth}
-                    onValueChange={setWindowWidth}
-                    min={1}
-                    max={4000}
-                    step={10}
-                    className="mt-2"
-                  />
-                  <span className="text-xs text-muted-foreground">{windowWidth[0]}</span>
-                </div>
-                <div>
-                  <label className="text-sm text-muted-foreground">Zoom</label>
-                  <Slider
-                    value={[zoom]}
-                    onValueChange={([value]) => setZoom(value)}
-                    min={0.1}
-                    max={5}
-                    step={0.1}
-                    className="mt-2"
-                  />
-                  <span className="text-xs text-muted-foreground">{(zoom * 100).toFixed(0)}%</span>
-                </div>
-                {probabilityMap && (
-                  <div>
-                    <label className="text-sm text-muted-foreground">Probability Threshold</label>
-                    <Slider
-                      value={probThreshold}
-                      onValueChange={setProbThreshold}
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      className="mt-2"
-                    />
-                    <span className="text-xs text-muted-foreground">{probThreshold[0].toFixed(2)}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Drawing Controls */}
-            <div>
-              <h3 className="font-medium text-foreground mb-3">Drawing Tools</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm text-muted-foreground">Brush Size</label>
-                  <Slider
-                    value={[drawing.brushSize]}
-                    onValueChange={([value]) => drawing.setBrushSize(value)}
-                    min={1}
-                    max={20}
-                    step={1}
-                    className="mt-2"
-                  />
-                  <span className="text-xs text-muted-foreground">{drawing.brushSize}px</span>
-                </div>
-                <div>
-                  <label className="text-sm text-muted-foreground">Eraser Size</label>
-                  <Slider
-                    value={[drawing.eraserSize]}
-                    onValueChange={([value]) => drawing.setEraserSize(value)}
-                    min={5}
-                    max={50}
-                    step={5}
-                    className="mt-2"
-                  />
-                  <span className="text-xs text-muted-foreground">{drawing.eraserSize}px</span>
-                </div>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => drawing.clearSlice(currentSlice)}
-                  className="w-full"
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentSlice(prev => Math.min(ctImages.length - 1, prev + 1))}
+                  disabled={currentSlice === ctImages.length - 1}
+                  title="Next slice (])"
                 >
-                  Clear Slice
+                  <ArrowLeft className="w-4 h-4 rotate-180" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentSlice(ctImages.length - 1)}
+                  disabled={currentSlice === ctImages.length - 1}
+                  title="Last slice"
+                >
+                  <ArrowLeft className="w-4 h-4 rotate-180" />
+                  <ArrowLeft className="w-4 h-4 rotate-180 -ml-3" />
                 </Button>
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Editor Panel */}
-      <div className="w-80 bg-card border-l border-border flex flex-col">
-        <div className="p-4 border-b border-border">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-foreground flex items-center gap-2">
-              <Layers className="w-5 h-5 text-primary" />
-              Structures
+        {/* Right Sidebar - Controls & Structures */}
+        <div className="w-72 bg-card border-l border-border flex flex-col overflow-hidden">
+          {/* Image Controls */}
+          <div className="p-4 border-b border-border space-y-3">
+            <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
+              <Settings className="w-4 h-4 text-primary" />
+              Image Controls
             </h3>
-            <Button variant="medical" size="sm" onClick={addNewStructure}>
-              <Plus className="w-4 h-4" />
-              New
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex-1 p-4 space-y-2 overflow-y-auto max-h-96">
-          {[...rtStructures, ...drawing.structures.filter(s => !s.id.startsWith('rt_'))].map((structure) => {
-            const isActive = drawing.activeStructureId === structure.id;
-            return (
-              <Card 
-                key={structure.id} 
-                className={`p-3 cursor-pointer transition-all ${
-                  isActive ? "border-primary shadow-glow" : "hover:bg-muted/50"
-                }`}
-                onClick={() => startEditingRTStructure(structure.id)}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className="w-4 h-4 rounded border-2 flex-shrink-0"
-                      style={{ backgroundColor: structure.color }}
-                    />
-                    <span className="text-sm font-medium text-foreground truncate">
-                      {structure.name}
-                    </span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleRTStructureVisibility(structure.id);
-                    }}
-                    className="flex-shrink-0"
-                  >
-                    {structure.visible ? (
-                      <Eye className="w-4 h-4" />
-                    ) : (
-                      <EyeOff className="w-4 h-4 text-muted-foreground" />
-                    )}
-                  </Button>
+            <div className="space-y-3">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-muted-foreground">Window Level</label>
+                  <span className="text-xs text-muted-foreground font-mono">{windowLevel[0]}</span>
                 </div>
-                {isActive && (
-                  <div className="mt-2 pt-2 border-t border-border">
-                    <Badge variant="secondary" className="text-xs">
-                      Active for drawing
-                    </Badge>
-                  </div>
-                )}
-              </Card>
-            );
-          })}
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={interpolateSlices}
-            className="w-full mt-4"
-          >
-            <Copy className="w-4 h-4 mr-2" />
-            Interpolate Slices
-          </Button>
-        </div>
+                <Slider
+                  value={windowLevel}
+                  onValueChange={setWindowLevel}
+                  min={-1000}
+                  max={3000}
+                  step={10}
+                />
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-muted-foreground">Window Width</label>
+                  <span className="text-xs text-muted-foreground font-mono">{windowWidth[0]}</span>
+                </div>
+                <Slider
+                  value={windowWidth}
+                  onValueChange={setWindowWidth}
+                  min={1}
+                  max={4000}
+                  step={10}
+                />
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-muted-foreground">Zoom</label>
+                  <span className="text-xs text-muted-foreground font-mono">{(zoom * 100).toFixed(0)}%</span>
+                </div>
+                <Slider
+                  value={[zoom]}
+                  onValueChange={([value]) => setZoom(value)}
+                  min={0.1}
+                  max={5}
+                  step={0.1}
+                />
+              </div>
+            </div>
+          </div>
 
-        <div className="p-4 border-t border-border bg-muted/30">
-          <div className="text-xs text-muted-foreground space-y-1">
-            <div>Total structures: {drawing.structures.length}</div>
-            <div>Visible: {drawing.structures.filter(s => s.visible).length}</div>
-            <div>Active: {drawing.activeStructureId || 'None'}</div>
-            <div>Contours on slice: {drawing.getContoursForSlice(currentSlice).length}</div>
+          {/* Drawing Settings */}
+          <div className="p-4 border-b border-border space-y-3">
+            <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
+              <Paintbrush className="w-4 h-4 text-primary" />
+              Drawing Settings
+            </h3>
+            <div className="space-y-3">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-muted-foreground">Brush Size</label>
+                  <span className="text-xs text-muted-foreground font-mono">{drawing.brushSize}px</span>
+                </div>
+                <Slider
+                  value={[drawing.brushSize]}
+                  onValueChange={([value]) => drawing.setBrushSize(value)}
+                  min={1}
+                  max={20}
+                  step={1}
+                />
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-muted-foreground">Eraser Size</label>
+                  <span className="text-xs text-muted-foreground font-mono">{drawing.eraserSize}px</span>
+                </div>
+                <Slider
+                  value={[drawing.eraserSize]}
+                  onValueChange={([value]) => drawing.setEraserSize(value)}
+                  min={5}
+                  max={50}
+                  step={5}
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => drawing.clearSlice(currentSlice)}
+                className="w-full"
+              >
+                Clear Current Slice
+              </Button>
+            </div>
+          </div>
+
+          {/* Structures List */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-border">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-primary" />
+                  Structures ({drawing.structures.length})
+                </h3>
+                <Button variant="medical" size="sm" onClick={addNewStructure} title="Create new structure">
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex-1 p-3 space-y-2 overflow-y-auto">
+              {[...rtStructures, ...drawing.structures.filter(s => !s.id.startsWith('rt_'))].map((structure) => {
+                const isActive = drawing.activeStructureId === structure.id;
+                return (
+                  <Card
+                    key={structure.id}
+                    className={`p-2 cursor-pointer transition-all ${
+                      isActive ? "border-primary shadow-glow bg-primary/5" : "hover:bg-muted/50"
+                    }`}
+                    onClick={() => startEditingRTStructure(structure.id)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div
+                          className="w-3 h-3 rounded border flex-shrink-0"
+                          style={{ backgroundColor: structure.color }}
+                        />
+                        <span className="text-xs font-medium text-foreground truncate">
+                          {structure.name}
+                        </span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleRTStructureVisibility(structure.id);
+                        }}
+                        className="flex-shrink-0 h-6 w-6 p-0"
+                      >
+                        {structure.visible ? (
+                          <Eye className="w-3 h-3" />
+                        ) : (
+                          <EyeOff className="w-3 h-3 text-muted-foreground" />
+                        )}
+                      </Button>
+                    </div>
+                  </Card>
+                );
+              })}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={interpolateSlices}
+                className="w-full mt-4"
+                title="Interpolate contours between slices (I)"
+              >
+                <Copy className="w-3 h-3 mr-2" />
+                Interpolate
+              </Button>
+            </div>
+
+            <div className="p-3 border-t border-border bg-muted/30">
+              <div className="text-xs text-muted-foreground space-y-0.5">
+                <div className="flex justify-between">
+                  <span>Visible:</span>
+                  <span className="font-mono">{drawing.structures.filter(s => s.visible).length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Contours here:</span>
+                  <span className="font-mono">{drawing.getContoursForSlice(currentSlice).length}</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
