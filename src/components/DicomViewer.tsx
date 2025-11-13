@@ -1,9 +1,16 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   ZoomIn,
   ZoomOut,
@@ -26,7 +33,12 @@ import {
   Undo,
   Redo,
   Maximize2,
-  Grid3x3
+  Grid3x3,
+  Play,
+  Pause,
+  ChevronLeft,
+  ChevronRight,
+  BarChart3,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
@@ -39,6 +51,7 @@ import { worldToCanvas as worldToCanvasUtil, canvasToWorld as canvasToWorldUtil 
 import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
 import { HUOverlay } from "@/components/HUOverlay";
+import { WINDOW_PRESETS } from "@/lib/window-presets";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -69,6 +82,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   // Viewer state
   const [currentSlice, setCurrentSlice] = useState(0);
   const [viewerTool, setViewerTool] = useState<ViewerTool>("select");
+  const [prevViewerTool, setPrevViewerTool] = useState<ViewerTool | null>(null);
   const [windowLevel, setWindowLevel] = useState([400]);
   const [windowWidth, setWindowWidth] = useState([800]);
   const [zoom, setZoom] = useState(1);
@@ -92,7 +106,15 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     pixelY: number;
     huValue: number;
   } | null>(null);
-  
+
+  // UI Enhancement states
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [cineMode, setCineMode] = useState(false);
+  const [cineFPS] = useState(10);
+  const cineIntervalRef = useRef<number | null>(null);
+
   // RT Structure state - only include RT structures
   const [rtStructures, setRTStructures] = useState<RTStructure[]>(() => {
     const structures: RTStructure[] = [];
@@ -330,21 +352,35 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     return canvasToWorldUtil(canvasX, canvasY, currentImage, config);
   };
 
-  // Handle wheel events for slice navigation
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+  // Handle wheel events for slice navigation and zoom
+  const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
-    
-    if (viewerTool !== "zoom") {
+
+    // Ctrl+scroll for zoom (works in any tool mode)
+    if (e.ctrlKey || e.metaKey) {
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      setZoom(prev => Math.max(0.1, Math.min(5, prev * delta)));
+    } else {
+      // Regular scroll for slice navigation (works in any tool mode)
       const delta = e.deltaY > 0 ? 1 : -1;
       setCurrentSlice(prev => {
         const newSlice = prev + delta;
         return Math.max(0, Math.min(ctImages.length - 1, newSlice));
       });
-    } else {
-      const delta = e.deltaY > 0 ? 0.9 : 1.1;
-      setZoom(prev => Math.max(0.1, Math.min(5, prev * delta)));
     }
-  };
+  }, [ctImages.length]);
+
+  // Add wheel event listener with passive: false to allow preventDefault
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleWheel]);
 
   // Drawing event handlers
   const handleStartDrawing = (point: Point2D) => {
@@ -372,7 +408,19 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
   // Mouse event handlers for Pan and Windowing tools
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (viewerTool === "pan" || viewerTool === "windowing") {
+    // Middle mouse button (button 1) for pan
+    if (e.button === 1) {
+      e.preventDefault();
+      setIsDragging(true);
+      setLastMousePos({ x: e.clientX, y: e.clientY });
+      // Temporarily switch to pan mode, storing current tool
+      setPrevViewerTool(viewerTool);
+      setViewerTool("pan");
+      return;
+    }
+
+    // Left button with pan or windowing tool
+    if (e.button === 0 && (viewerTool === "pan" || viewerTool === "windowing")) {
       setIsDragging(true);
       setLastMousePos({ x: e.clientX, y: e.clientY });
     }
@@ -459,7 +507,14 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     setLastMousePos({ x: e.clientX, y: e.clientY });
   };
 
-  const handleCanvasMouseUp = () => {
+  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // If middle button was used for pan, restore previous tool
+    if (e.button === 1 && isDragging) {
+      if (prevViewerTool) {
+        setViewerTool(prevViewerTool);
+        setPrevViewerTool(null);
+      }
+    }
     setIsDragging(false);
   };
 
@@ -636,6 +691,103 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       });
     }
   };
+
+  // Window/Level preset handlers
+  const applyWindowPreset = (presetName: string) => {
+    const preset = WINDOW_PRESETS.find(p => p.name === presetName);
+    if (preset) {
+      setWindowLevel([preset.windowLevel]);
+      setWindowWidth([preset.windowWidth]);
+      toast({
+        title: `${preset.name} preset applied`,
+        description: preset.description,
+      });
+    }
+  };
+
+  // Fullscreen toggle
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+      setIsFullscreen(true);
+      toast({
+        title: "Fullscreen mode",
+        description: "Press ESC or F to exit fullscreen",
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    }
+  };
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  // Cine mode (auto-play)
+  const toggleCineMode = () => {
+    if (cineMode) {
+      // Stop cine mode
+      if (cineIntervalRef.current) {
+        clearInterval(cineIntervalRef.current);
+        cineIntervalRef.current = null;
+      }
+      setCineMode(false);
+      toast({
+        title: "Cine mode stopped",
+      });
+    } else {
+      // Start cine mode
+      setCineMode(true);
+      const intervalMs = 1000 / cineFPS;
+      cineIntervalRef.current = window.setInterval(() => {
+        setCurrentSlice(prev => {
+          const next = prev + 1;
+          if (next >= ctImages.length) {
+            return 0; // Loop back to start
+          }
+          return next;
+        });
+      }, intervalMs);
+      toast({
+        title: "Cine mode started",
+        description: `Playing at ${cineFPS} FPS`,
+      });
+    }
+  };
+
+  // Clean up cine mode on unmount
+  useEffect(() => {
+    return () => {
+      if (cineIntervalRef.current) {
+        clearInterval(cineIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Update cine interval when FPS changes
+  useEffect(() => {
+    if (cineMode && cineIntervalRef.current) {
+      clearInterval(cineIntervalRef.current);
+      const intervalMs = 1000 / cineFPS;
+      cineIntervalRef.current = window.setInterval(() => {
+        setCurrentSlice(prev => {
+          const next = prev + 1;
+          if (next >= ctImages.length) {
+            return 0;
+          }
+          return next;
+        });
+      }, intervalMs);
+    }
+  }, [cineFPS, cineMode, ctImages.length]);
 
   // Define keyboard shortcuts
   const keyboardShortcuts: KeyboardShortcut[] = useMemo(() => [
@@ -843,6 +995,28 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       description: 'Toggle MPR 3D view',
       category: 'View',
     },
+    {
+      key: 'f',
+      handler: toggleFullscreen,
+      description: 'Toggle fullscreen mode',
+      category: 'View',
+    },
+    {
+      key: 'c',
+      handler: toggleCineMode,
+      description: 'Toggle cine/auto-play mode',
+      category: 'View',
+    },
+    {
+      key: ' ',
+      handler: () => {
+        if (cineMode) {
+          toggleCineMode();
+        }
+      },
+      description: 'Pause cine mode (spacebar)',
+      category: 'View',
+    },
 
     // Quick structure selection (1-9)
     ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => ({
@@ -877,7 +1051,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   return (
     <div className="min-h-screen bg-background flex flex-col animate-fade-in">
       {/* Compact Header */}
-      <div className="bg-card border-b border-border px-4 py-2">
+      <div className="bg-card border-b border-border px-4 py-2 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             {onBack && (
@@ -951,6 +1125,24 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
             <Button variant="outline" size="sm" onClick={resetView} title="Reset view (R)">
               <RotateCcw className="w-4 h-4" />
             </Button>
+            <Separator orientation="vertical" className="h-6" />
+            <Button
+              variant={cineMode ? "default" : "outline"}
+              size="sm"
+              onClick={toggleCineMode}
+              title="Cine/Auto-play mode (C)"
+            >
+              {cineMode ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            </Button>
+            <Button
+              variant={isFullscreen ? "default" : "outline"}
+              size="sm"
+              onClick={toggleFullscreen}
+              title="Fullscreen mode (F)"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </Button>
+            <Separator orientation="vertical" className="h-6" />
             <Button variant="medical" size="sm" onClick={handleDownload} title="Export structures (Ctrl+S)">
               <Download className="w-4 h-4 mr-1" />
               Export
@@ -973,75 +1165,102 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         // Standard Single-Plane View
       <div className="flex-1 flex overflow-hidden">
         {/* Left Tool Sidebar */}
-        <div className="w-16 bg-card border-r border-border flex flex-col p-2 gap-2">
-          <div className="text-xs text-muted-foreground text-center mb-2 font-medium">Tools</div>
+        {!leftSidebarCollapsed && (
+          <div className="w-16 bg-card border-r border-border flex flex-col p-2 gap-2 relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setLeftSidebarCollapsed(true)}
+              className="absolute -right-3 top-2 h-6 w-6 p-0 rounded-full bg-card border border-border z-10"
+              title="Collapse toolbar"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
 
-          {/* Viewer Tools */}
-          <Button
-            variant={viewerTool === "select" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => handleViewerToolChange("select")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Select tool (S) - Default navigation"
-          >
-            <MousePointer className="w-5 h-5" />
-            <span className="text-xs">Select</span>
-          </Button>
-          <Button
-            variant={viewerTool === "pan" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => handleViewerToolChange("pan")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Pan tool (P) - Drag to move image"
-          >
-            <Move className="w-5 h-5" />
-            <span className="text-xs">Pan</span>
-          </Button>
-          <Button
-            variant={viewerTool === "windowing" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => handleViewerToolChange("windowing")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Window/Level tool (W) - Drag to adjust brightness/contrast"
-          >
-            <Settings className="w-5 h-5" />
-            <span className="text-xs">W/L</span>
-          </Button>
+            <div className="text-xs text-muted-foreground text-center mb-2 font-medium">Tools</div>
 
-          <Separator className="my-2" />
+            {/* Viewer Tools */}
+            <Button
+              variant={viewerTool === "select" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => handleViewerToolChange("select")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Select tool (S) - Default navigation"
+            >
+              <MousePointer className="w-5 h-5" />
+              <span className="text-xs">Select</span>
+            </Button>
+            <Button
+              variant={viewerTool === "pan" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => handleViewerToolChange("pan")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Pan tool (P) - Drag to move image"
+            >
+              <Move className="w-5 h-5" />
+              <span className="text-xs">Pan</span>
+            </Button>
+            <Button
+              variant={viewerTool === "windowing" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => handleViewerToolChange("windowing")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Window/Level tool (W) - Drag to adjust brightness/contrast"
+            >
+              <Settings className="w-5 h-5" />
+              <span className="text-xs">W/L</span>
+            </Button>
 
-          {/* Drawing Tools */}
-          <Button
-            variant={drawing.currentTool === "brush" ? "medical" : "ghost"}
-            size="sm"
-            onClick={() => handleDrawingToolChange("brush")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Brush tool (B) - Draw contours"
-          >
-            <Paintbrush className="w-5 h-5" />
-            <span className="text-xs">Brush</span>
-          </Button>
-          <Button
-            variant={drawing.currentTool === "polygon" ? "medical" : "ghost"}
-            size="sm"
-            onClick={() => handleDrawingToolChange("polygon")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Polygon tool - Click to add points"
-          >
-            <Scissors className="w-5 h-5" />
-            <span className="text-xs">Polygon</span>
-          </Button>
-          <Button
-            variant={drawing.currentTool === "eraser" ? "destructive" : "ghost"}
-            size="sm"
-            onClick={() => handleDrawingToolChange("eraser")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Eraser tool (E) - Remove contours"
-          >
-            <Eraser className="w-5 h-5" />
-            <span className="text-xs">Erase</span>
-          </Button>
-        </div>
+            <Separator className="my-2" />
+
+            {/* Drawing Tools */}
+            <Button
+              variant={drawing.currentTool === "brush" ? "medical" : "ghost"}
+              size="sm"
+              onClick={() => handleDrawingToolChange("brush")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Brush tool (B) - Draw contours"
+            >
+              <Paintbrush className="w-5 h-5" />
+              <span className="text-xs">Brush</span>
+            </Button>
+            <Button
+              variant={drawing.currentTool === "polygon" ? "medical" : "ghost"}
+              size="sm"
+              onClick={() => handleDrawingToolChange("polygon")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Polygon tool - Click to add points"
+            >
+              <Scissors className="w-5 h-5" />
+              <span className="text-xs">Polygon</span>
+            </Button>
+            <Button
+              variant={drawing.currentTool === "eraser" ? "destructive" : "ghost"}
+              size="sm"
+              onClick={() => handleDrawingToolChange("eraser")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Eraser tool (E) - Remove contours"
+            >
+              <Eraser className="w-5 h-5" />
+              <span className="text-xs">Erase</span>
+            </Button>
+          </div>
+        )}
+
+        {/* Collapsed Left Sidebar - Show Button */}
+        {leftSidebarCollapsed && (
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setLeftSidebarCollapsed(false)}
+              className="absolute left-0 top-2 h-8 w-6 p-0 rounded-r-md bg-card border border-border border-l-0 z-10"
+              title="Expand toolbar"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
 
         {/* Main Viewer Canvas */}
         <div className="flex-1 bg-black flex flex-col">
@@ -1054,8 +1273,11 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                   imageRendering: "pixelated",
                   width: "800px",
                   height: "800px",
+                  maxWidth: "100%",
+                  maxHeight: "100%",
                   border: "2px solid #333",
                   cursor:
+                    isDragging && viewerTool === "pan" ? "grabbing" :
                     viewerTool === "pan" ? "grab" :
                     viewerTool === "windowing" ? "crosshair" :
                     drawing.currentTool === "brush" ? "crosshair" :
@@ -1063,11 +1285,11 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                     drawing.currentTool === "polygon" ? "crosshair" :
                     "default"
                 }}
-                onWheel={handleWheel}
                 onMouseDown={handleCanvasMouseDown}
                 onMouseMove={handleCanvasMouseMove}
                 onMouseUp={handleCanvasMouseUp}
                 onMouseLeave={handleCanvasMouseLeave}
+                onContextMenu={(e) => e.preventDefault()}
               />
 
               <DrawingCanvas
@@ -1162,7 +1384,6 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                 onAddPoint={handleAddPoint}
                 onFinishDrawing={handleFinishDrawing}
                 onEraseAt={handleEraseAt}
-                onWheel={handleWheel}
               />
 
               {/* HU Value Overlay */}
@@ -1181,13 +1402,12 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
               )}
 
               <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1.5 rounded text-xs">
-                {viewerTool === "select" && drawing.currentTool === "select" && "🖱️ Scroll: Navigate slices"}
-                {viewerTool === "pan" && "🖱️ Drag: Pan • Scroll: Navigate"}
-                {viewerTool === "zoom" && "🖱️ Scroll: Zoom in/out"}
-                {viewerTool === "windowing" && "🖱️ Drag: Adjust brightness/contrast"}
-                {drawing.currentTool === "brush" && "🖱️ Draw contour • Scroll: Navigate"}
-                {drawing.currentTool === "eraser" && "🖱️ Erase contours • Scroll: Navigate"}
-                {drawing.currentTool === "polygon" && "🖱️ Click: Add points • Double-click: Finish"}
+                {viewerTool === "select" && drawing.currentTool === "select" && "🖱️ Scroll: Slices • Ctrl+Scroll: Zoom • Middle: Pan"}
+                {viewerTool === "pan" && "🖱️ Drag: Pan • Scroll: Slices • Ctrl+Scroll: Zoom"}
+                {viewerTool === "windowing" && "🖱️ Drag: Brightness/Contrast • Scroll: Slices"}
+                {drawing.currentTool === "brush" && "🖱️ Draw • Scroll: Slices • Ctrl+Scroll: Zoom"}
+                {drawing.currentTool === "eraser" && "🖱️ Erase • Scroll: Slices • Ctrl+Scroll: Zoom"}
+                {drawing.currentTool === "polygon" && "🖱️ Click: Points • Double-click: Finish • Scroll: Slices"}
               </div>
             </div>
           </div>
@@ -1256,14 +1476,42 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         </div>
 
         {/* Right Sidebar - Controls & Structures */}
-        <div className="w-72 bg-card border-l border-border flex flex-col overflow-hidden">
-          {/* Image Controls */}
-          <div className="p-4 border-b border-border space-y-3">
-            <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
-              <Settings className="w-4 h-4 text-primary" />
-              Image Controls
-            </h3>
+        {!rightSidebarCollapsed && (
+          <div className="w-72 bg-card border-l border-border flex flex-col overflow-hidden relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setRightSidebarCollapsed(true)}
+              className="absolute -left-3 top-2 h-6 w-6 p-0 rounded-full bg-card border border-border z-10"
+              title="Collapse panel"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+
+            {/* Image Controls */}
+            <div className="p-4 border-b border-border space-y-3">
+              <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
+                <Settings className="w-4 h-4 text-primary" />
+                Image Controls
+              </h3>
             <div className="space-y-3">
+              {/* W/L Presets */}
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Window/Level Presets</label>
+                <Select onValueChange={applyWindowPreset}>
+                  <SelectTrigger className="w-full h-8 text-xs">
+                    <SelectValue placeholder="Select preset..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {WINDOW_PRESETS.map((preset) => (
+                      <SelectItem key={preset.name} value={preset.name} className="text-xs">
+                        {preset.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="text-xs text-muted-foreground">Window Level</label>
@@ -1431,6 +1679,22 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
             </div>
           </div>
         </div>
+        )}
+
+        {/* Collapsed Right Sidebar - Show Button */}
+        {rightSidebarCollapsed && (
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setRightSidebarCollapsed(false)}
+              className="absolute right-0 top-2 h-8 w-6 p-0 rounded-l-md bg-card border border-border border-r-0 z-10"
+              title="Expand panel"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
       </div>
       )}
 

@@ -15,7 +15,6 @@ interface DrawingCanvasProps {
   onAddPoint: (point: Point2D) => void;
   onFinishDrawing: () => void;
   onEraseAt: (point: Point2D) => void;
-  onWheel?: (e: React.WheelEvent<HTMLCanvasElement>) => void;
 }
 
 export function DrawingCanvas({
@@ -30,8 +29,7 @@ export function DrawingCanvas({
   onStartDrawing,
   onAddPoint,
   onFinishDrawing,
-  onEraseAt,
-  onWheel
+  onEraseAt
 }: DrawingCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawingRef = useRef(false);
@@ -204,7 +202,6 @@ export function DrawingCanvas({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
-      onWheel={onWheel}
     />
   );
 }
