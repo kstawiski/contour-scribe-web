@@ -1,9 +1,16 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   ZoomIn,
   ZoomOut,
@@ -26,7 +33,12 @@ import {
   Undo,
   Redo,
   Maximize2,
-  Grid3x3
+  Grid3x3,
+  Play,
+  Pause,
+  ChevronLeft,
+  ChevronRight,
+  BarChart3,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
@@ -39,6 +51,8 @@ import { worldToCanvas as worldToCanvasUtil, canvasToWorld as canvasToWorldUtil 
 import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
 import { HUOverlay } from "@/components/HUOverlay";
+import { WINDOW_PRESETS, WindowPreset } from "@/lib/window-presets";
+import { calculateStructureStatistics, formatVolume, formatArea } from "@/lib/statistics-utils";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -92,7 +106,16 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     pixelY: number;
     huValue: number;
   } | null>(null);
-  
+
+  // UI Enhancement states
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [cineMode, setCineMode] = useState(false);
+  const [cineFPS, setCineFPS] = useState(10);
+  const [showStats, setShowStats] = useState(false);
+  const cineIntervalRef = useRef<number | null>(null);
+
   // RT Structure state - only include RT structures
   const [rtStructures, setRTStructures] = useState<RTStructure[]>(() => {
     const structures: RTStructure[] = [];
@@ -666,6 +689,103 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     }
   };
 
+  // Window/Level preset handlers
+  const applyWindowPreset = (presetName: string) => {
+    const preset = WINDOW_PRESETS.find(p => p.name === presetName);
+    if (preset) {
+      setWindowLevel([preset.windowLevel]);
+      setWindowWidth([preset.windowWidth]);
+      toast({
+        title: `${preset.name} preset applied`,
+        description: preset.description,
+      });
+    }
+  };
+
+  // Fullscreen toggle
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+      setIsFullscreen(true);
+      toast({
+        title: "Fullscreen mode",
+        description: "Press ESC or F to exit fullscreen",
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    }
+  };
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  // Cine mode (auto-play)
+  const toggleCineMode = () => {
+    if (cineMode) {
+      // Stop cine mode
+      if (cineIntervalRef.current) {
+        clearInterval(cineIntervalRef.current);
+        cineIntervalRef.current = null;
+      }
+      setCineMode(false);
+      toast({
+        title: "Cine mode stopped",
+      });
+    } else {
+      // Start cine mode
+      setCineMode(true);
+      const intervalMs = 1000 / cineFPS;
+      cineIntervalRef.current = window.setInterval(() => {
+        setCurrentSlice(prev => {
+          const next = prev + 1;
+          if (next >= ctImages.length) {
+            return 0; // Loop back to start
+          }
+          return next;
+        });
+      }, intervalMs);
+      toast({
+        title: "Cine mode started",
+        description: `Playing at ${cineFPS} FPS`,
+      });
+    }
+  };
+
+  // Clean up cine mode on unmount
+  useEffect(() => {
+    return () => {
+      if (cineIntervalRef.current) {
+        clearInterval(cineIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Update cine interval when FPS changes
+  useEffect(() => {
+    if (cineMode && cineIntervalRef.current) {
+      clearInterval(cineIntervalRef.current);
+      const intervalMs = 1000 / cineFPS;
+      cineIntervalRef.current = window.setInterval(() => {
+        setCurrentSlice(prev => {
+          const next = prev + 1;
+          if (next >= ctImages.length) {
+            return 0;
+          }
+          return next;
+        });
+      }, intervalMs);
+    }
+  }, [cineFPS, cineMode, ctImages.length]);
+
   // Define keyboard shortcuts
   const keyboardShortcuts: KeyboardShortcut[] = useMemo(() => [
     // Help
@@ -870,6 +990,28 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         });
       },
       description: 'Toggle MPR 3D view',
+      category: 'View',
+    },
+    {
+      key: 'f',
+      handler: toggleFullscreen,
+      description: 'Toggle fullscreen mode',
+      category: 'View',
+    },
+    {
+      key: 'c',
+      handler: toggleCineMode,
+      description: 'Toggle cine/auto-play mode',
+      category: 'View',
+    },
+    {
+      key: ' ',
+      handler: () => {
+        if (cineMode) {
+          toggleCineMode();
+        }
+      },
+      description: 'Pause cine mode (spacebar)',
       category: 'View',
     },
 
