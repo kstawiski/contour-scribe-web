@@ -306,13 +306,13 @@ export function canvasToVolumeCoords(
     case 'sagittal':
       x = crosshair.sagittalIndex;
       y = Math.floor(canvasY);
-      // Z is flipped in sagittal view (head at left/X=0)
+      // Z is flipped in sagittal view (head at right/high X values)
       z = volume.depth - 1 - Math.floor(canvasX);
       break;
     case 'coronal':
       x = Math.floor(canvasX);
       y = crosshair.coronalIndex;
-      // Z is flipped in coronal view (head at top/Y=0)
+      // Z is flipped in coronal view (head at top/high Y values)
       z = volume.depth - 1 - Math.floor(canvasY);
       break;
     default:

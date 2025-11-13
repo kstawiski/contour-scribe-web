@@ -51,8 +51,7 @@ import { worldToCanvas as worldToCanvasUtil, canvasToWorld as canvasToWorldUtil 
 import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
 import { HUOverlay } from "@/components/HUOverlay";
-import { WINDOW_PRESETS, WindowPreset } from "@/lib/window-presets";
-import { calculateStructureStatistics, formatVolume, formatArea } from "@/lib/statistics-utils";
+import { WINDOW_PRESETS } from "@/lib/window-presets";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -83,6 +82,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   // Viewer state
   const [currentSlice, setCurrentSlice] = useState(0);
   const [viewerTool, setViewerTool] = useState<ViewerTool>("select");
+  const [prevViewerTool, setPrevViewerTool] = useState<ViewerTool | null>(null);
   const [windowLevel, setWindowLevel] = useState([400]);
   const [windowWidth, setWindowWidth] = useState([800]);
   const [zoom, setZoom] = useState(1);
@@ -112,8 +112,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [cineMode, setCineMode] = useState(false);
-  const [cineFPS, setCineFPS] = useState(10);
-  const [showStats, setShowStats] = useState(false);
+  const [cineFPS] = useState(10);
   const cineIntervalRef = useRef<number | null>(null);
 
   // RT Structure state - only include RT structures
@@ -414,7 +413,8 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       e.preventDefault();
       setIsDragging(true);
       setLastMousePos({ x: e.clientX, y: e.clientY });
-      // Temporarily switch to pan mode
+      // Temporarily switch to pan mode, storing current tool
+      setPrevViewerTool(viewerTool);
       setViewerTool("pan");
       return;
     }
@@ -510,7 +510,10 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
     // If middle button was used for pan, restore previous tool
     if (e.button === 1 && isDragging) {
-      setViewerTool("select");
+      if (prevViewerTool) {
+        setViewerTool(prevViewerTool);
+        setPrevViewerTool(null);
+      }
     }
     setIsDragging(false);
   };
@@ -1046,7 +1049,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   useKeyboardShortcuts(keyboardShortcuts, { enabled: true });
 
   return (
-    <div className="h-screen bg-background flex flex-col animate-fade-in overflow-hidden">
+    <div className="min-h-screen bg-background flex flex-col animate-fade-in">
       {/* Compact Header */}
       <div className="bg-card border-b border-border px-4 py-2 flex-shrink-0">
         <div className="flex items-center justify-between">
