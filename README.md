@@ -2,7 +2,7 @@
 
 > A specialized web-based medical imaging tool for visualization and modification of DICOM-RT (Radiation Therapy) files.
 
-![Version](https://img.shields.io/badge/version-0.3.0-blue)
+![Version](https://img.shields.io/badge/version-0.5.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![React](https://img.shields.io/badge/React-18.3.1-61dafb)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.5.3-3178c6)
@@ -134,8 +134,10 @@ Output will be in the `dist/` directory, ready for deployment.
 
 ## 🗺️ Roadmap
 
-### ✅ Completed (v0.3.0)
-- **Keyboard shortcuts** for all tools and actions (NEW in v0.3.0)
+### ✅ Completed (v0.5.0)
+- **Code splitting & bundle optimization** - Reduced largest chunk from 586KB to 157KB (NEW in v0.5.0)
+- **HU value display on hover** - Real-time tissue identification (NEW in v0.4.0)
+- **Keyboard shortcuts** for all tools and actions (v0.3.0)
 - RT Structure export functionality
 - Proper contour interpolation
 - Interactive pan and window/level tools
@@ -145,8 +147,6 @@ Output will be in the `dist/` directory, ready for deployment.
 
 ### 🚧 In Progress
 - Undo/Redo system
-- HU value display on hover
-- Code splitting to reduce bundle size
 
 ### 📋 Planned
 - Structure editing UI (rename, recolor)
@@ -183,7 +183,6 @@ See [CLAUDE.md](./CLAUDE.md#-development-guidelines) for detailed guidelines.
 
 ## 🐛 Known Issues
 
-- Bundle size exceeds 500KB (code splitting planned)
 - No undo/redo functionality yet (high priority)
 - Dual structure state management (refactor planned)
 - No unit tests (infrastructure in roadmap)
