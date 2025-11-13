@@ -204,6 +204,7 @@ export function DrawingCanvas({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      onWheel={onWheel}
     />
   );
 }

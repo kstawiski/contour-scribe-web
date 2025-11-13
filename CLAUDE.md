@@ -665,6 +665,133 @@ This file is designed to help you quickly understand the project state and pick 
 
 ## 📝 Change Log
 
+### v0.8.0 (2025-11-13)
+**Major Feature**:
+- **Multi-Planar Reconstruction (MPR) / 3D View**: Complete 3D visualization system
+  - **3D Volume Reconstruction**:
+    - Built MPR volume from axial DICOM slices
+    - Intelligent slice spacing calculation
+    - Support for both 8-bit and 16-bit pixel data
+    - Full metadata preservation (spacing, orientation)
+  - **Three Orthogonal Views**:
+    - Axial view (XY plane) - standard top-down view
+    - Sagittal view (YZ plane) - side view
+    - Coronal view (XZ plane) - front view
+    - All views update in real-time
+  - **Linked Crosshair System**:
+    - Green crosshair lines showing current position
+    - Click any view to update crosshair in all views
+    - Perfect synchronization across all three planes
+  - **Independent Navigation**:
+    - Scroll through slices with mouse wheel in each view
+    - Precise slider controls for each plane
+    - Current slice indicator (X / Total) on each panel
+  - **Smart Interface**:
+    - 2x2 grid layout (3 views + info panel)
+    - View labels (AXIAL, SAGITTAL, CORONAL)
+    - Active view highlight with green border
+    - Focused panel indication with keyboard navigation
+  - **Volume Information Display**:
+    - Real-time crosshair position (X, Y, Z coordinates)
+    - Volume dimensions display
+    - Pixel and slice spacing information
+    - Helpful usage instructions
+  - **Easy Toggle**:
+    - Grid icon button in header to switch modes
+    - Keyboard shortcut 'M' to toggle MPR view
+    - Toast notifications for mode changes
+    - Smooth transition between single and multi-plane views
+
+**Technical Implementation**:
+- Created `mpr-utils.ts` with reconstruction algorithms:
+  - `buildMPRVolume()` - constructs 3D volume from axial slices
+  - `getAxialSlice()` - extracts XY plane at Z index
+  - `getSagittalSlice()` - extracts YZ plane at X index
+  - `getCoronalSlice()` - extracts XZ plane at Y index
+  - `renderMPRSliceToCanvas()` - renders with window/level
+  - Coordinate transformation utilities
+- Created `MPRViewer.tsx` component:
+  - Three canvas elements for three views
+  - Shared crosshair state across all views
+  - Independent pan/zoom state per panel (prepared for future)
+  - Real-time rendering with window/level adjustments
+  - Crosshair drawing with dashed green lines
+- Updated `DicomViewer.tsx`:
+  - Added MPR mode state toggle
+  - Conditional rendering for single vs. MPR view
+  - Added Grid3x3 icon button in header
+  - Keyboard shortcut 'M' for quick toggle
+
+**Benefits**:
+- **Complete 3D understanding** - see anatomy from all angles simultaneously
+- **Precise localization** - crosshair shows exact position in 3D space
+- **Efficient navigation** - quickly jump to any point in the volume
+- **Professional workflow** - matches medical imaging workstations
+- **No learning curve** - intuitive click-to-navigate interface
+- **Maintains all features** - drawing tools still available in single-plane mode
+
+**Files Changed**: 3 files (2 new, 1 modified)
+- New: `src/lib/mpr-utils.ts` (365 lines)
+- New: `src/components/MPRViewer.tsx` (445 lines)
+- Modified: `src/components/DicomViewer.tsx` (+40 lines)
+**Build**: Successful (Index chunk: 75.04 KB, +12.46 KB for MPR feature)
+**Bundle sizes**: Within limits (largest chunk still 157KB)
+
+### v0.7.0 (2025-11-13)
+**Major Feature**:
+- **Complete UI/UX Redesign**: Dramatically improved interface intuitiveness and usability
+  - **Fixed Critical Bug**: Mouse wheel scrolling through slices now works properly
+    - Added missing onWheel event handler to DrawingCanvas overlay
+    - Wheel events now properly forward from drawing overlay to main canvas
+  - **New Layout Architecture**:
+    - Compact top header with essential actions (Back, Undo/Redo, Reset, Export, Shortcuts)
+    - Left vertical tool sidebar with icon + label buttons (easier to find tools)
+    - Prominent bottom slice navigation bar with << < slider > >> controls
+    - Consolidated right sidebar with Image Controls, Drawing Settings, and Structures
+  - **Tool Organization**:
+    - Viewer tools (Select, Pan, W/L) grouped together on left sidebar
+    - Drawing tools (Brush, Polygon, Eraser) grouped below viewer tools
+    - Each tool button shows icon, label, and tooltip with keyboard shortcut
+  - **Slice Navigation Improvements**:
+    - Moved from hidden right panel to prominent bottom bar
+    - Added first/last slice buttons (<< and >>)
+    - Large visible slider with current slice indicator
+    - Clear "Slice X / Total" counter display
+  - **Better Visual Feedback**:
+    - Context-sensitive help text on canvas (top-left corner with emoji icons)
+    - Clear tooltips on all buttons with keyboard shortcut hints
+    - Color-coded tool buttons (medical green for drawing, red for eraser)
+    - Active tool highlighting with background color
+  - **Improved Information Display**:
+    - Compact header showing slice count and RT structure status
+    - Structures panel shows count in header
+    - Reduced font sizes and spacing for more screen space
+    - Better use of vertical space
+
+**Benefits**:
+- **Mouse wheel navigation now works** - users can scroll through slices with any tool active
+- **Much more intuitive** - tools are clearly labeled and organized logically
+- **Slice navigation is prominent** - no longer hidden, easy to see and use
+- **Larger canvas area** - more space for actual medical image viewing
+- **Faster workflow** - everything is accessible with fewer clicks
+- **Better for new users** - self-explanatory interface with helpful tooltips
+
+**Technical Changes**:
+- Added `onWheel` prop to DrawingCanvas component (line 207 in DrawingCanvas.tsx)
+- Complete reorganization of DicomViewer.tsx layout structure:
+  - Changed from horizontal 3-panel layout to structured top/left/center/right/bottom layout
+  - Reduced header height (compact design)
+  - Changed right sidebar from 2 panels (80px + 80px) to 1 consolidated panel (72px)
+  - Added left tool sidebar (16px width, vertical layout)
+  - Added prominent bottom navigation bar with border-primary highlight
+- Added `getImageBounds` helper function for HU overlay positioning
+- Enhanced button titles/tooltips throughout the interface
+- Used emoji icons in context help for better visual communication
+
+**Files Changed**: 2 files (DrawingCanvas.tsx, DicomViewer.tsx), ~500 lines modified
+**Build**: Successful (Index chunk: 62.58 KB, +1.65 KB from v0.6.0)
+**Bundle sizes maintained**: No significant increase, still under 157KB largest chunk
+
 ### v0.6.0 (2025-11-13)
 **Major Feature**:
 - **Undo/Redo System**: Complete history management for contour editing
