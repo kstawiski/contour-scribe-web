@@ -331,7 +331,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   };
 
   // Handle wheel events for slice navigation and zoom
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+  const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
 
     // Ctrl+scroll for zoom (works in any tool mode)
@@ -346,7 +346,19 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         return Math.max(0, Math.min(ctImages.length - 1, newSlice));
       });
     }
-  };
+  }, [ctImages.length]);
+
+  // Add wheel event listener with passive: false to allow preventDefault
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleWheel]);
 
   // Drawing event handlers
   const handleStartDrawing = (point: Point2D) => {
@@ -1083,7 +1095,6 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                     drawing.currentTool === "polygon" ? "crosshair" :
                     "default"
                 }}
-                onWheel={handleWheel}
                 onMouseDown={handleCanvasMouseDown}
                 onMouseMove={handleCanvasMouseMove}
                 onMouseUp={handleCanvasMouseUp}
@@ -1183,7 +1194,6 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                 onAddPoint={handleAddPoint}
                 onFinishDrawing={handleFinishDrawing}
                 onEraseAt={handleEraseAt}
-                onWheel={handleWheel}
               />
 
               {/* HU Value Overlay */}
