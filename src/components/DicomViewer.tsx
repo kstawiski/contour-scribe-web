@@ -1049,7 +1049,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   useKeyboardShortcuts(keyboardShortcuts, { enabled: true });
 
   return (
-    <div className="min-h-screen bg-background flex flex-col animate-fade-in">
+    <div className="h-screen bg-background flex flex-col animate-fade-in overflow-hidden">
       {/* Compact Header */}
       <div className="bg-card border-b border-border px-4 py-2 flex-shrink-0">
         <div className="flex items-center justify-between">
@@ -1160,6 +1160,8 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
           windowWidth={windowWidth[0]}
           onWindowLevelChange={(level) => setWindowLevel([level])}
           onWindowWidthChange={(width) => setWindowWidth([width])}
+          rtStruct={rtStruct}
+          structures={drawing.structures}
         />
       ) : (
         // Standard Single-Plane View
@@ -1263,18 +1265,19 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         )}
 
         {/* Main Viewer Canvas */}
-        <div className="flex-1 bg-black flex flex-col">
-          <div className="flex-1 flex items-center justify-center p-2">
-            <div className="relative">
+        <div className="flex-1 bg-black flex flex-col min-h-0">
+          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
+            <div className="relative w-full h-full flex items-center justify-center">
               <canvas
                 ref={canvasRef}
-                className="shadow-elevation block"
+                className="shadow-elevation block max-w-full max-h-full"
                 style={{
                   imageRendering: "pixelated",
-                  width: "800px",
-                  height: "800px",
+                  width: "auto",
+                  height: "auto",
                   maxWidth: "100%",
                   maxHeight: "100%",
+                  aspectRatio: "1 / 1",
                   border: "2px solid #333",
                   cursor:
                     isDragging && viewerTool === "pan" ? "grabbing" :
@@ -1295,6 +1298,14 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
               <DrawingCanvas
                 width={800}
                 height={800}
+                className="max-w-full max-h-full"
+                canvasStyle={{
+                  width: "auto",
+                  height: "auto",
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  aspectRatio: "1 / 1",
+                }}
                 contours={drawing.getContoursForSlice(currentSlice).map(contour => ({
                   ...contour,
                   points: contour.points.map(worldPoint => {

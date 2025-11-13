@@ -47,20 +47,30 @@ export function buildMPRVolume(axialSlices: DicomImage[]): MPRVolume | null {
     return null;
   }
 
-  const firstSlice = axialSlices[0];
+  // CRITICAL: Sort slices by slice location (Z position) to ensure correct 3D volume
+  // Without sorting, sagittal and coronal views will show scrambled "salt and pepper" patterns
+  const sortedSlices = [...axialSlices].sort((a, b) => {
+    if (a.sliceLocation !== undefined && b.sliceLocation !== undefined) {
+      return a.sliceLocation - b.sliceLocation;
+    }
+    // Fallback: if no slice location, maintain original order
+    return 0;
+  });
+
+  const firstSlice = sortedSlices[0];
   const width = firstSlice.width;
   const height = firstSlice.height;
-  const depth = axialSlices.length;
+  const depth = sortedSlices.length;
 
   // Get spacing information
   const pixelSpacing: [number, number] = firstSlice.pixelSpacing
     ? [firstSlice.pixelSpacing[0], firstSlice.pixelSpacing[1]]
     : [1, 1];
 
-  // Calculate slice spacing from slice locations
+  // Calculate slice spacing from slice locations (using sorted slices)
   let sliceSpacing = 1;
-  if (axialSlices.length > 1 && axialSlices[0].sliceLocation !== undefined && axialSlices[1].sliceLocation !== undefined) {
-    sliceSpacing = Math.abs(axialSlices[1].sliceLocation - axialSlices[0].sliceLocation);
+  if (sortedSlices.length > 1 && sortedSlices[0].sliceLocation !== undefined && sortedSlices[1].sliceLocation !== undefined) {
+    sliceSpacing = Math.abs(sortedSlices[1].sliceLocation - sortedSlices[0].sliceLocation);
   } else if (firstSlice.sliceThickness !== undefined) {
     sliceSpacing = firstSlice.sliceThickness;
   }
@@ -74,14 +84,14 @@ export function buildMPRVolume(axialSlices: DicomImage[]): MPRVolume | null {
     ? new Uint16Array(volumeSize)
     : new Uint8Array(volumeSize);
 
-  // Copy axial slices into volume
-  axialSlices.forEach((slice, z) => {
+  // Copy sorted axial slices into volume
+  sortedSlices.forEach((slice, z) => {
     const offset = z * width * height;
     volumeData.set(slice.pixelData, offset);
   });
 
   return {
-    axialSlices,
+    axialSlices: sortedSlices, // Use sorted slices for consistency
     width,
     height,
     depth,
