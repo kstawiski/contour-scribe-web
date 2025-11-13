@@ -1162,75 +1162,102 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         // Standard Single-Plane View
       <div className="flex-1 flex overflow-hidden">
         {/* Left Tool Sidebar */}
-        <div className="w-16 bg-card border-r border-border flex flex-col p-2 gap-2">
-          <div className="text-xs text-muted-foreground text-center mb-2 font-medium">Tools</div>
+        {!leftSidebarCollapsed && (
+          <div className="w-16 bg-card border-r border-border flex flex-col p-2 gap-2 relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setLeftSidebarCollapsed(true)}
+              className="absolute -right-3 top-2 h-6 w-6 p-0 rounded-full bg-card border border-border z-10"
+              title="Collapse toolbar"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
 
-          {/* Viewer Tools */}
-          <Button
-            variant={viewerTool === "select" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => handleViewerToolChange("select")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Select tool (S) - Default navigation"
-          >
-            <MousePointer className="w-5 h-5" />
-            <span className="text-xs">Select</span>
-          </Button>
-          <Button
-            variant={viewerTool === "pan" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => handleViewerToolChange("pan")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Pan tool (P) - Drag to move image"
-          >
-            <Move className="w-5 h-5" />
-            <span className="text-xs">Pan</span>
-          </Button>
-          <Button
-            variant={viewerTool === "windowing" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => handleViewerToolChange("windowing")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Window/Level tool (W) - Drag to adjust brightness/contrast"
-          >
-            <Settings className="w-5 h-5" />
-            <span className="text-xs">W/L</span>
-          </Button>
+            <div className="text-xs text-muted-foreground text-center mb-2 font-medium">Tools</div>
 
-          <Separator className="my-2" />
+            {/* Viewer Tools */}
+            <Button
+              variant={viewerTool === "select" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => handleViewerToolChange("select")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Select tool (S) - Default navigation"
+            >
+              <MousePointer className="w-5 h-5" />
+              <span className="text-xs">Select</span>
+            </Button>
+            <Button
+              variant={viewerTool === "pan" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => handleViewerToolChange("pan")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Pan tool (P) - Drag to move image"
+            >
+              <Move className="w-5 h-5" />
+              <span className="text-xs">Pan</span>
+            </Button>
+            <Button
+              variant={viewerTool === "windowing" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => handleViewerToolChange("windowing")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Window/Level tool (W) - Drag to adjust brightness/contrast"
+            >
+              <Settings className="w-5 h-5" />
+              <span className="text-xs">W/L</span>
+            </Button>
 
-          {/* Drawing Tools */}
-          <Button
-            variant={drawing.currentTool === "brush" ? "medical" : "ghost"}
-            size="sm"
-            onClick={() => handleDrawingToolChange("brush")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Brush tool (B) - Draw contours"
-          >
-            <Paintbrush className="w-5 h-5" />
-            <span className="text-xs">Brush</span>
-          </Button>
-          <Button
-            variant={drawing.currentTool === "polygon" ? "medical" : "ghost"}
-            size="sm"
-            onClick={() => handleDrawingToolChange("polygon")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Polygon tool - Click to add points"
-          >
-            <Scissors className="w-5 h-5" />
-            <span className="text-xs">Polygon</span>
-          </Button>
-          <Button
-            variant={drawing.currentTool === "eraser" ? "destructive" : "ghost"}
-            size="sm"
-            onClick={() => handleDrawingToolChange("eraser")}
-            className="w-full h-12 flex flex-col items-center gap-1 p-1"
-            title="Eraser tool (E) - Remove contours"
-          >
-            <Eraser className="w-5 h-5" />
-            <span className="text-xs">Erase</span>
-          </Button>
-        </div>
+            <Separator className="my-2" />
+
+            {/* Drawing Tools */}
+            <Button
+              variant={drawing.currentTool === "brush" ? "medical" : "ghost"}
+              size="sm"
+              onClick={() => handleDrawingToolChange("brush")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Brush tool (B) - Draw contours"
+            >
+              <Paintbrush className="w-5 h-5" />
+              <span className="text-xs">Brush</span>
+            </Button>
+            <Button
+              variant={drawing.currentTool === "polygon" ? "medical" : "ghost"}
+              size="sm"
+              onClick={() => handleDrawingToolChange("polygon")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Polygon tool - Click to add points"
+            >
+              <Scissors className="w-5 h-5" />
+              <span className="text-xs">Polygon</span>
+            </Button>
+            <Button
+              variant={drawing.currentTool === "eraser" ? "destructive" : "ghost"}
+              size="sm"
+              onClick={() => handleDrawingToolChange("eraser")}
+              className="w-full h-12 flex flex-col items-center gap-1 p-1"
+              title="Eraser tool (E) - Remove contours"
+            >
+              <Eraser className="w-5 h-5" />
+              <span className="text-xs">Erase</span>
+            </Button>
+          </div>
+        )}
+
+        {/* Collapsed Left Sidebar - Show Button */}
+        {leftSidebarCollapsed && (
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setLeftSidebarCollapsed(false)}
+              className="absolute left-0 top-2 h-8 w-6 p-0 rounded-r-md bg-card border border-border border-l-0 z-10"
+              title="Expand toolbar"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
 
         {/* Main Viewer Canvas */}
         <div className="flex-1 bg-black flex flex-col">
@@ -1446,13 +1473,24 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         </div>
 
         {/* Right Sidebar - Controls & Structures */}
-        <div className="w-72 bg-card border-l border-border flex flex-col overflow-hidden">
-          {/* Image Controls */}
-          <div className="p-4 border-b border-border space-y-3">
-            <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
-              <Settings className="w-4 h-4 text-primary" />
-              Image Controls
-            </h3>
+        {!rightSidebarCollapsed && (
+          <div className="w-72 bg-card border-l border-border flex flex-col overflow-hidden relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setRightSidebarCollapsed(true)}
+              className="absolute -left-3 top-2 h-6 w-6 p-0 rounded-full bg-card border border-border z-10"
+              title="Collapse panel"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+
+            {/* Image Controls */}
+            <div className="p-4 border-b border-border space-y-3">
+              <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
+                <Settings className="w-4 h-4 text-primary" />
+                Image Controls
+              </h3>
             <div className="space-y-3">
               {/* W/L Presets */}
               <div>
@@ -1638,6 +1676,22 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
             </div>
           </div>
         </div>
+        )}
+
+        {/* Collapsed Right Sidebar - Show Button */}
+        {rightSidebarCollapsed && (
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setRightSidebarCollapsed(false)}
+              className="absolute right-0 top-2 h-8 w-6 p-0 rounded-l-md bg-card border border-border border-r-0 z-10"
+              title="Expand panel"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
       </div>
       )}
 
