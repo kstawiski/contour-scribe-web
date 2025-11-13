@@ -1122,6 +1122,24 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
             <Button variant="outline" size="sm" onClick={resetView} title="Reset view (R)">
               <RotateCcw className="w-4 h-4" />
             </Button>
+            <Separator orientation="vertical" className="h-6" />
+            <Button
+              variant={cineMode ? "default" : "outline"}
+              size="sm"
+              onClick={toggleCineMode}
+              title="Cine/Auto-play mode (C)"
+            >
+              {cineMode ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            </Button>
+            <Button
+              variant={isFullscreen ? "default" : "outline"}
+              size="sm"
+              onClick={toggleFullscreen}
+              title="Fullscreen mode (F)"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </Button>
+            <Separator orientation="vertical" className="h-6" />
             <Button variant="medical" size="sm" onClick={handleDownload} title="Export structures (Ctrl+S)">
               <Download className="w-4 h-4 mr-1" />
               Export
@@ -1436,6 +1454,23 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
               Image Controls
             </h3>
             <div className="space-y-3">
+              {/* W/L Presets */}
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Window/Level Presets</label>
+                <Select onValueChange={applyWindowPreset}>
+                  <SelectTrigger className="w-full h-8 text-xs">
+                    <SelectValue placeholder="Select preset..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {WINDOW_PRESETS.map((preset) => (
+                      <SelectItem key={preset.name} value={preset.name} className="text-xs">
+                        {preset.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="text-xs text-muted-foreground">Window Level</label>
