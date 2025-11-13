@@ -15,6 +15,8 @@ interface DrawingCanvasProps {
   onAddPoint: (point: Point2D) => void;
   onFinishDrawing: () => void;
   onEraseAt: (point: Point2D) => void;
+  className?: string;
+  canvasStyle?: React.CSSProperties;
 }
 
 export function DrawingCanvas({
@@ -29,7 +31,9 @@ export function DrawingCanvas({
   onStartDrawing,
   onAddPoint,
   onFinishDrawing,
-  onEraseAt
+  onEraseAt,
+  className = '',
+  canvasStyle = {}
 }: DrawingCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawingRef = useRef(false);
@@ -189,6 +193,7 @@ export function DrawingCanvas({
       ref={canvasRef}
       width={width}
       height={height}
+      className={className}
       style={{
         position: 'absolute',
         top: 0,
@@ -196,7 +201,8 @@ export function DrawingCanvas({
         cursor: getCursor(),
         touchAction: 'none',
         userSelect: 'none',
-        pointerEvents: currentTool === 'select' ? 'none' : 'auto'
+        pointerEvents: currentTool === 'select' ? 'none' : 'auto',
+        ...canvasStyle
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
