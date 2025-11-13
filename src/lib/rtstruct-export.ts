@@ -20,7 +20,19 @@ interface ExportContour {
 }
 
 /**
- * Convert canvas/world coordinates back to DICOM patient coordinates
+ * Convert canvas/world coordinates to DICOM patient coordinates.
+ * 
+ * This function properly handles the DICOM Image Orientation (Patient) attribute
+ * to transform from pixel coordinates to 3D patient coordinate system.
+ * 
+ * The transformation follows the DICOM standard:
+ * P = S + (X * ΔC * Xc) + (Y * ΔR * Yc)
+ * where:
+ *   P = Patient coordinates [x, y, z]
+ *   S = Image Position (Patient)
+ *   X, Y = Column and Row indices (from point.x, point.y)
+ *   ΔC, ΔR = Pixel spacing (column, row)
+ *   Xc, Yc = Direction cosines from Image Orientation
  */
 function worldToDicomCoordinates(
   point: Point2D,
@@ -32,14 +44,19 @@ function worldToDicomCoordinates(
   const spacing = image.pixelSpacing || [1, 1];
 
   // Image orientation defines the direction cosines of the first row and first column
+  // orientation = [rowX, rowY, rowZ, colX, colY, colZ]
   const rowCosines = [orientation[0], orientation[1], orientation[2]];
   const colCosines = [orientation[3], orientation[4], orientation[5]];
 
-  // Convert from pixel coordinates to patient coordinates
+  // In our coordinate system, point.x represents the column index and point.y represents the row index
+  const column = point.x;
+  const row = point.y;
+
+  // Convert from pixel coordinates to patient coordinates using the DICOM formula:
   // Patient coordinates = Image Position + (column * spacing[0] * rowCosines) + (row * spacing[1] * colCosines)
-  const x = position[0] + point.x * spacing[0] * rowCosines[0] + point.y * spacing[1] * colCosines[0];
-  const y = position[1] + point.x * spacing[0] * rowCosines[1] + point.y * spacing[1] * colCosines[1];
-  const z = position[2] + point.x * spacing[0] * rowCosines[2] + point.y * spacing[1] * colCosines[2];
+  const x = position[0] + column * spacing[0] * rowCosines[0] + row * spacing[1] * colCosines[0];
+  const y = position[1] + column * spacing[0] * rowCosines[1] + row * spacing[1] * colCosines[1];
+  const z = position[2] + column * spacing[0] * rowCosines[2] + row * spacing[1] * colCosines[2];
 
   return { x, y, z };
 }
@@ -70,13 +87,18 @@ export function exportRTStructAsJSON(
       sliceLocation: img.sliceLocation,
       imagePosition: img.imagePosition,
     })),
-    structures: structures.map(structure => ({
-      id: structure.id,
-      name: structure.name,
-      color: structure.color,
-      visible: structure.visible,
-      roiNumber: parseInt(structure.id.replace(/\D/g, '')) || Math.floor(Math.random() * 1000),
-      contours: structure.contours.map(contour => {
+    structures: (() => {
+      let roiCounter = 1;
+      return structures.map(structure => {
+        const roiNumberFromId = parseInt(structure.id.replace(/\D/g, ''));
+        const roiNumber = roiNumberFromId || roiCounter++;
+        return {
+          id: structure.id,
+          name: structure.name,
+          color: structure.color,
+          visible: structure.visible,
+          roiNumber: roiNumber,
+          contours: structure.contours.map(contour => {
         const image = ctImages[contour.sliceIndex];
         if (!image) {
           console.warn(`Image not found for slice ${contour.sliceIndex}`);
@@ -92,12 +114,13 @@ export function exportRTStructAsJSON(
           sliceIndex: contour.sliceIndex,
           sopInstanceUID: image.sopInstanceUID,
           numberOfPoints: contour.points.length,
-          contourGeometricType: 'CLOSED_PLANAR',
+          contourGeometricType: contour.isClosed ? 'CLOSED_PLANAR' : 'OPEN_PLANAR',
           // Flatten to array: [x1, y1, z1, x2, y2, z2, ...]
           contourData: dicomPoints.flatMap(p => [p.x, p.y, p.z]),
         };
-      }).filter(c => c !== null),
-    })),
+        }).filter(c => c !== null),
+      };
+    })})(),
   };
 
   // Create a blob and download

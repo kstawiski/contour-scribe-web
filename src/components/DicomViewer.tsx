@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -28,9 +28,9 @@ import { useToast } from "@/hooks/use-toast";
 import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
 import { DrawingCanvas } from "@/components/DrawingCanvas";
 import { useDrawing, DrawingTool } from "@/hooks/useDrawing";
-import { BooleanOperation, Point2D, interpolateContours } from "@/lib/contour-utils";
+import { Point2D, interpolateContours } from "@/lib/contour-utils";
 import { exportRTStruct } from "@/lib/rtstruct-export";
-import { worldToCanvas as worldToCanvasUtil, canvasToWorld as canvasToWorldUtil, getImageBounds } from "@/lib/coordinate-utils";
+import { worldToCanvas as worldToCanvasUtil, canvasToWorld as canvasToWorldUtil } from "@/lib/coordinate-utils";
 import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
 
@@ -274,14 +274,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
   }, [currentSlice, rtStructures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawing, probabilityMap, probThreshold]);
 
-  // Cleanup effect to prevent memory leaks
-  useEffect(() => {
-    return () => {
-      // Clean up temporary canvases on unmount
-      tempCanvasRef.current = null;
-      overlayCanvasRef.current = null;
-    };
-  }, []);
+  // Note: Canvas refs are automatically cleaned up by React on unmount
 
   // Convert canvas coordinates to world coordinates for drawing
   const canvasToWorld = (canvasX: number, canvasY: number): Point2D => {
@@ -825,7 +818,13 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                   width: "800px",
                   height: "800px",
                   border: "2px solid #333",
-                  cursor: viewerTool === "pan" ? "grab" : viewerTool === "windowing" ? "crosshair" : "default"
+                  cursor: 
+                    viewerTool === "pan" ? "grab" : 
+                    viewerTool === "windowing" ? "crosshair" :
+                    drawing.currentTool === "brush" ? "crosshair" :
+                    drawing.currentTool === "eraser" ? "cell" :
+                    drawing.currentTool === "polygon" ? "crosshair" :
+                    "default"
                 }}
                 onWheel={handleWheel}
                 onMouseDown={handleCanvasMouseDown}
