@@ -3,7 +3,6 @@
  */
 
 import { Point2D } from './contour-utils';
-import { DicomImage } from './dicom-utils';
 
 export interface ContourStatistics {
   area: number; // in mm²
