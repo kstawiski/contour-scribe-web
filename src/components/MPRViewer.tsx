@@ -27,13 +27,6 @@ interface MPRViewerProps {
   onWindowWidthChange: (width: number) => void;
 }
 
-interface PanelState {
-  zoom: number;
-  pan: { x: number; y: number };
-  isDragging: boolean;
-  lastMousePos: { x: number; y: number };
-}
-
 export const MPRViewer = ({
   ctImages,
   windowLevel,
@@ -56,28 +49,6 @@ export const MPRViewer = ({
     axialIndex: 0,
     sagittalIndex: 0,
     coronalIndex: 0,
-  });
-
-  // Panel states (independent zoom/pan for each view)
-  const [axialState, setAxialState] = useState<PanelState>({
-    zoom: 1,
-    pan: { x: 0, y: 0 },
-    isDragging: false,
-    lastMousePos: { x: 0, y: 0 },
-  });
-
-  const [sagittalState, setSagittalState] = useState<PanelState>({
-    zoom: 1,
-    pan: { x: 0, y: 0 },
-    isDragging: false,
-    lastMousePos: { x: 0, y: 0 },
-  });
-
-  const [coronalState, setCoronalState] = useState<PanelState>({
-    zoom: 1,
-    pan: { x: 0, y: 0 },
-    isDragging: false,
-    lastMousePos: { x: 0, y: 0 },
   });
 
   const [focusedPanel, setFocusedPanel] = useState<ViewPlane | null>(null);
@@ -260,42 +231,7 @@ export const MPRViewer = ({
     [volume, crosshair]
   );
 
-  // Pan handlers
-  const createPanHandlers = (
-    plane: ViewPlane,
-    state: PanelState,
-    setState: React.Dispatch<React.SetStateAction<PanelState>>
-  ) => ({
-    onMouseDown: (e: React.MouseEvent) => {
-      setState((prev) => ({
-        ...prev,
-        isDragging: true,
-        lastMousePos: { x: e.clientX, y: e.clientY },
-      }));
-    },
-    onMouseMove: (e: React.MouseEvent) => {
-      if (!state.isDragging) return;
-      const deltaX = e.clientX - state.lastMousePos.x;
-      const deltaY = e.clientY - state.lastMousePos.y;
-      setState((prev) => ({
-        ...prev,
-        pan: { x: prev.pan.x + deltaX, y: prev.pan.y + deltaY },
-        lastMousePos: { x: e.clientX, y: e.clientY },
-      }));
-    },
-    onMouseUp: () => {
-      setState((prev) => ({ ...prev, isDragging: false }));
-    },
-    onMouseLeave: () => {
-      setState((prev) => ({ ...prev, isDragging: false }));
-    },
-  });
-
   const resetView = () => {
-    setAxialState({ zoom: 1, pan: { x: 0, y: 0 }, isDragging: false, lastMousePos: { x: 0, y: 0 } });
-    setSagittalState({ zoom: 1, pan: { x: 0, y: 0 }, isDragging: false, lastMousePos: { x: 0, y: 0 } });
-    setCoronalState({ zoom: 1, pan: { x: 0, y: 0 }, isDragging: false, lastMousePos: { x: 0, y: 0 } });
-
     if (volume) {
       setCrosshair({
         axialIndex: Math.floor(volume.depth / 2),
@@ -306,7 +242,7 @@ export const MPRViewer = ({
 
     toast({
       title: "View reset",
-      description: "All panels returned to default view",
+      description: "Crosshair returned to center of volume",
     });
   };
 

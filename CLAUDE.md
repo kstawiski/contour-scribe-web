@@ -1,7 +1,7 @@
 # DicomEdit Development Guide
 
 **Last Updated**: 2025-11-13
-**Current Version**: 0.8.0
+**Current Version**: 0.6.0
 **Status**: Active Development
 
 ---

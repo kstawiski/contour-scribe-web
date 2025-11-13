@@ -67,7 +67,6 @@ export function buildMPRVolume(axialSlices: DicomImage[]): MPRVolume | null {
 
   // Determine if we're working with 8-bit or 16-bit data
   const is16Bit = firstSlice.pixelData instanceof Uint16Array;
-  const bytesPerPixel = is16Bit ? 2 : 1;
 
   // Allocate volume data
   const volumeSize = width * height * depth;
@@ -279,6 +278,12 @@ export function canvasToVolumeCoords(
       y = crosshair.coronalIndex;
       z = Math.floor(canvasY);
       break;
+    default:
+      // Should never happen with proper ViewPlane type, but handle defensively
+      x = 0;
+      y = 0;
+      z = 0;
+      break;
   }
 
   return {
@@ -310,5 +315,8 @@ export function getPhysicalDimensions(volume: MPRVolume, plane: ViewPlane): { wi
         width: width * pixelSpacing[0],
         height: depth * sliceSpacing,
       };
+    default:
+      // Should never happen with proper ViewPlane type, but handle defensively
+      throw new Error(`Unknown plane: ${plane}`);
   }
 }
