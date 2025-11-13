@@ -33,6 +33,7 @@ import { exportRTStruct } from "@/lib/rtstruct-export";
 import { worldToCanvas as worldToCanvasUtil, canvasToWorld as canvasToWorldUtil, getImageBounds } from "@/lib/coordinate-utils";
 import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
+import { HUOverlay } from "@/components/HUOverlay";
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -75,6 +76,16 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
   // Keyboard shortcuts help modal
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
+  // HU value display state
+  const [showHUOverlay, setShowHUOverlay] = useState(true);
+  const [showCrosshair, setShowCrosshair] = useState(false);
+  const [mouseCanvasPos, setMouseCanvasPos] = useState<{ x: number; y: number } | null>(null);
+  const [huInfo, setHUInfo] = useState<{
+    pixelX: number;
+    pixelY: number;
+    huValue: number;
+  } | null>(null);
   
   // RT Structure state - only include RT structures
   const [rtStructures, setRTStructures] = useState<RTStructure[]>(() => {
@@ -346,24 +357,78 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   };
 
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Update HU overlay position and value
+    const canvas = canvasRef.current;
+    if (canvas && showHUOverlay) {
+      const rect = canvas.getBoundingClientRect();
+      const canvasX = e.clientX - rect.left;
+      const canvasY = e.clientY - rect.top;
+
+      setMouseCanvasPos({ x: canvasX, y: canvasY });
+
+      // Convert canvas coordinates to pixel coordinates in the image
+      const currentImage = ctImages[currentSlice];
+      if (currentImage) {
+        const config = {
+          canvasSize: 800,
+          zoom,
+          pan,
+        };
+
+        const bounds = getImageBounds(currentImage, config);
+
+        // Check if mouse is within image bounds
+        if (
+          canvasX >= bounds.x &&
+          canvasX <= bounds.x + bounds.width &&
+          canvasY >= bounds.y &&
+          canvasY <= bounds.y + bounds.height
+        ) {
+          // Convert to pixel coordinates
+          const pixelX = ((canvasX - bounds.x) / bounds.width) * currentImage.width;
+          const pixelY = ((canvasY - bounds.y) / bounds.height) * currentImage.height;
+
+          // Get HU value
+          const huValue = DicomProcessor.getHUValueAtPixel(
+            currentImage,
+            pixelX,
+            pixelY
+          );
+
+          if (huValue !== null) {
+            setHUInfo({
+              pixelX: Math.floor(pixelX),
+              pixelY: Math.floor(pixelY),
+              huValue,
+            });
+          } else {
+            setHUInfo(null);
+          }
+        } else {
+          setHUInfo(null);
+        }
+      }
+    }
+
+    // Handle pan and windowing drag
     if (!isDragging) return;
 
     const deltaX = e.clientX - lastMousePos.x;
     const deltaY = e.clientY - lastMousePos.y;
 
     if (viewerTool === "pan") {
-      setPan(prev => ({
+      setPan((prev) => ({
         x: prev.x + deltaX,
-        y: prev.y + deltaY
+        y: prev.y + deltaY,
       }));
     } else if (viewerTool === "windowing") {
       // Horizontal movement adjusts window width
       // Vertical movement adjusts window level
-      setWindowWidth(prev => {
+      setWindowWidth((prev) => {
         const newWidth = Math.max(1, prev[0] + deltaX * 2);
         return [newWidth];
       });
-      setWindowLevel(prev => {
+      setWindowLevel((prev) => {
         const newLevel = prev[0] - deltaY * 2; // Inverted for intuitive up/down
         return [newLevel];
       });
@@ -378,6 +443,8 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
   const handleCanvasMouseLeave = () => {
     setIsDragging(false);
+    setMouseCanvasPos(null);
+    setHUInfo(null);
   };
 
   // Tool change handlers
@@ -639,6 +706,23 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       key: 'r',
       handler: resetView,
       description: 'Reset view',
+      category: 'View',
+    },
+    {
+      key: 'h',
+      ctrl: true,
+      handler: () => {
+        setShowHUOverlay((prev) => !prev);
+      },
+      description: 'Toggle HU value overlay',
+      category: 'View',
+    },
+    {
+      key: 'x',
+      handler: () => {
+        setShowCrosshair((prev) => !prev);
+      },
+      description: 'Toggle crosshair',
       category: 'View',
     },
 
@@ -928,7 +1012,22 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                 onEraseAt={handleEraseAt}
                 onWheel={handleWheel}
               />
-              
+
+              {/* HU Value Overlay */}
+              {mouseCanvasPos && huInfo && (
+                <HUOverlay
+                  visible={showHUOverlay}
+                  x={mouseCanvasPos.x}
+                  y={mouseCanvasPos.y}
+                  pixelX={huInfo.pixelX}
+                  pixelY={huInfo.pixelY}
+                  huValue={huInfo.huValue}
+                  sliceNumber={currentSlice}
+                  totalSlices={ctImages.length}
+                  showCrosshair={showCrosshair}
+                />
+              )}
+
               <div className="absolute bottom-2 left-2 bg-black/80 text-white p-2 rounded text-xs">
                 {viewerTool === "select" && drawing.currentTool === "select" && "Mouse wheel: Navigate slices"}
                 {viewerTool === "pan" && "Drag: Pan image | Wheel: Navigate slices"}

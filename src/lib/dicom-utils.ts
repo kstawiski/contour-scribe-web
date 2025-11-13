@@ -13,10 +13,14 @@ export interface DicomImage {
   rescaleSlope: number;
   seriesInstanceUID: string;
   sopInstanceUID: string;
+  sopClassUID?: string;
   imagePosition?: number[];
+  imageOrientation?: number[];
   sliceLocation?: number;
   sliceThickness?: number;
   pixelSpacing?: number[];
+  frameOfReferenceUID?: string;
+  studyInstanceUID?: string;
 }
 
 export interface DicomStructure {
@@ -317,5 +321,101 @@ export class DicomProcessor {
     };
 
     return matched;
+  }
+
+  /**
+   * Get Hounsfield Unit value at a specific pixel coordinate
+   * @param image - DICOM image
+   * @param x - Pixel X coordinate (0-based)
+   * @param y - Pixel Y coordinate (0-based)
+   * @returns HU value or null if out of bounds
+   */
+  static getHUValueAtPixel(
+    image: DicomImage,
+    x: number,
+    y: number
+  ): number | null {
+    // Check bounds
+    if (x < 0 || x >= image.width || y < 0 || y >= image.height) {
+      return null;
+    }
+
+    // Calculate pixel index
+    const pixelIndex = Math.floor(y) * image.width + Math.floor(x);
+
+    // Check if index is valid
+    if (pixelIndex < 0 || pixelIndex >= image.pixelData.length) {
+      return null;
+    }
+
+    // Get raw pixel value
+    const rawValue = image.pixelData[pixelIndex];
+
+    // Apply rescale slope and intercept to get HU value
+    const huValue = rawValue * image.rescaleSlope + image.rescaleIntercept;
+
+    return huValue;
+  }
+
+  /**
+   * Get detailed pixel information at coordinates
+   * @param image - DICOM image
+   * @param x - Pixel X coordinate
+   * @param y - Pixel Y coordinate
+   * @returns Pixel info object or null if out of bounds
+   */
+  static getPixelInfo(
+    image: DicomImage,
+    x: number,
+    y: number
+  ): {
+    x: number;
+    y: number;
+    hu: number;
+    raw: number;
+    worldX?: number;
+    worldY?: number;
+    worldZ?: number;
+  } | null {
+    const hu = this.getHUValueAtPixel(image, x, y);
+    if (hu === null) return null;
+
+    const pixelIndex = Math.floor(y) * image.width + Math.floor(x);
+    const raw = image.pixelData[pixelIndex];
+
+    // Calculate world coordinates if available
+    let worldX, worldY, worldZ;
+    if (image.imagePosition && image.pixelSpacing) {
+      const position = image.imagePosition;
+      const spacing = image.pixelSpacing;
+      const orientation = image.imageOrientation || [1, 0, 0, 0, 1, 0];
+
+      // Row and column direction cosines
+      const rowCosines = [orientation[0], orientation[1], orientation[2]];
+      const colCosines = [orientation[3], orientation[4], orientation[5]];
+
+      worldX =
+        position[0] +
+        x * spacing[0] * rowCosines[0] +
+        y * spacing[1] * colCosines[0];
+      worldY =
+        position[1] +
+        x * spacing[0] * rowCosines[1] +
+        y * spacing[1] * colCosines[1];
+      worldZ =
+        position[2] +
+        x * spacing[0] * rowCosines[2] +
+        y * spacing[1] * colCosines[2];
+    }
+
+    return {
+      x: Math.floor(x),
+      y: Math.floor(y),
+      hu,
+      raw,
+      worldX,
+      worldY,
+      worldZ,
+    };
   }
 }
