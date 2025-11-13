@@ -296,8 +296,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   // Helper function to get image bounds on canvas
   const getImageBounds = (image: DicomImage, config: { canvasSize: number; zoom: number; pan: { x: number; y: number } }) => {
     const imageAspect = image.width / image.height;
-    let drawWidth = image.width;
-    let drawHeight = image.height;
+    let drawWidth, drawHeight;
 
     const maxSize = config.canvasSize * 0.95;
     if (imageAspect > 1) {
@@ -832,10 +831,11 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     {
       key: 'm',
       handler: () => {
-        setMprMode((prev) => !prev);
+        const newMprMode = !mprMode;
+        setMprMode(newMprMode);
         toast({
-          title: !mprMode ? "MPR View" : "Single View",
-          description: !mprMode
+          title: newMprMode ? "MPR View" : "Single View",
+          description: newMprMode
             ? "Switched to multi-planar reconstruction view"
             : "Switched to standard single-plane view",
         });
