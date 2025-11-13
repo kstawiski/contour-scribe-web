@@ -2,7 +2,7 @@
 
 **Last Updated**: 2025-11-13
 **Current Version**: 0.9.0
-**Status**: Active Development - Comprehensive Editing Features Complete
+**Status**: Beta - Editing System Complete
 
 ---
 
@@ -752,7 +752,7 @@ This file is designed to help you quickly understand the project state and pick 
 - **Context Help**: Tool-specific instructions in info boxes
 
 **Technical Implementation**
-- **New File**: `src/lib/editing-utils.ts` (1000+ lines)
+- **New File**: `src/lib/editing-utils.ts` (901 lines)
   - Selection and hit-testing functions
   - Point manipulation algorithms (move, insert, delete, elastic drag)
   - 3D smoothing with cross-slice interpolation
@@ -803,7 +803,7 @@ This file is designed to help you quickly understand the project state and pick 
 - **Reversible**: Full undo/redo support for confidence in editing
 
 **Files Changed**: 5 files (2 new, 3 extensively modified)
-- New: `src/lib/editing-utils.ts` (1009 lines)
+- New: `src/lib/editing-utils.ts` (901 lines)
 - New: `src/components/EditingPanel.tsx` (410 lines)
 - Modified: `src/hooks/useDrawing.ts` (+427 lines, now 653 total)
 - Modified: `src/components/DrawingCanvas.tsx` (+180 lines, now 373 total)

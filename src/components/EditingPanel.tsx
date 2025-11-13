@@ -29,7 +29,6 @@ import {
   Sparkles,
   Wand2,
   Target,
-  Droplet,
 } from 'lucide-react';
 import { BooleanOp } from '@/lib/editing-utils';
 import { Structure3D } from '@/lib/contour-utils';

@@ -41,7 +41,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { DicomImage, DicomRTStruct, DicomProcessor, getHUValueAtPixel } from "@/lib/dicom-utils";
+import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
 import { DrawingCanvas } from "@/components/DrawingCanvas";
 import { MPRViewer } from "@/components/MPRViewer";
 import { EditingPanel } from "@/components/EditingPanel";
@@ -387,6 +387,70 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   // Drawing event handlers
   const handleStartDrawing = (point: Point2D) => {
     const worldPoint = canvasToWorld(point.x, point.y);
+    
+    // Handle region-grow and magic-wand tools
+    if (drawing.currentTool === 'region-grow' || drawing.currentTool === 'magic-wand') {
+      const currentImage = ctImages[currentSlice];
+      if (!currentImage) return;
+      
+      // Convert world point to pixel coordinates
+      const config = {
+        canvasSize: 800,
+        zoom,
+        pan,
+      };
+      
+      const bounds = getImageBounds(currentImage, config);
+      const pixelX = Math.floor((worldPoint.x - bounds.x) / (bounds.width / currentImage.width));
+      const pixelY = Math.floor((worldPoint.y - bounds.y) / (bounds.height / currentImage.height));
+      
+      // Check if click is within image bounds
+      if (pixelX < 0 || pixelX >= currentImage.width || pixelY < 0 || pixelY >= currentImage.height) {
+        toast({
+          title: "Click outside image",
+          description: "Please click on the image area",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      const imageData = {
+        width: currentImage.width,
+        height: currentImage.height,
+        data: currentImage.pixelData,
+        windowWidth: windowWidth[0],
+        windowCenter: windowLevel[0],
+      };
+      
+      // Get tolerance from EditingPanel (default to 50 if not available)
+      const tolerance = 50; // This should ideally come from EditingPanel state
+      
+      const success = drawing.performRegionGrowing(
+        imageData,
+        pixelX,
+        pixelY,
+        tolerance,
+        currentSlice,
+        currentImage.rescaleSlope || 1,
+        currentImage.rescaleIntercept || 0
+      );
+      
+      if (success) {
+        toast({
+          title: "Region growing complete",
+          description: `Region extracted at (${pixelX}, ${pixelY})`,
+        });
+      } else {
+        toast({
+          title: "No region found",
+          description: "Try adjusting the tolerance or clicking on a different area",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
+    
+    // Normal drawing behavior
     drawing.startDrawing(worldPoint);
   };
 
@@ -878,20 +942,20 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   }, [drawing, ctImages, currentSlice, windowWidth, windowLevel, toast]);
 
   const handleRegionGrow = useCallback((tolerance: number) => {
+    drawing.setTool('region-grow');
     toast({
       title: "Region growing active",
       description: "Click on the image to set seed point",
     });
-    // This will be triggered by canvas click in region-grow mode
-  }, [toast]);
+  }, [drawing, toast]);
 
   const handleMagicWand = useCallback((tolerance: number) => {
+    drawing.setTool('magic-wand');
     toast({
       title: "Magic wand active",
       description: "Click on the image to select region",
     });
-    // This will be triggered by canvas click in magic-wand mode
-  }, [toast]);
+  }, [drawing, toast]);
 
   // Fullscreen toggle
   const toggleFullscreen = () => {
