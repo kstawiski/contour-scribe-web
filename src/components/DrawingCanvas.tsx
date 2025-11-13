@@ -1,12 +1,6 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { Point2D, Contour } from '@/lib/contour-utils';
-import { DrawingTool } from '@/hooks/useDrawing';
-
-interface SelectedContour {
-  contourId: string;
-  structureId: string;
-  selectedPointIndex: number | null;
-}
+import { DrawingTool, SelectedContour } from '@/hooks/useDrawing';
 
 interface DrawingCanvasProps {
   width: number;
@@ -58,9 +52,20 @@ export function DrawingCanvas({
   const isDrawingRef = useRef(false);
   const [draggingPointIndex, setDraggingPointIndex] = useState<number | null>(null);
   const [hoverPointIndex, setHoverPointIndex] = useState<number | null>(null);
+  const hoverPointIndexRef = useRef<number | null>(null);
+  const draggingPointIndexRef = useRef<number | null>(null);
 
-  // Render contours and current path
+  // Update refs when state changes
   useEffect(() => {
+    hoverPointIndexRef.current = hoverPointIndex;
+  }, [hoverPointIndex]);
+
+  useEffect(() => {
+    draggingPointIndexRef.current = draggingPointIndex;
+  }, [draggingPointIndex]);
+
+  // Render function (can be called without triggering useEffect)
+  const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -151,8 +156,8 @@ export function DrawingCanvas({
         // Draw control points
         selectedContourData.points.forEach((point, index) => {
           const isSelected = selectedContour.selectedPointIndex === index;
-          const isHovered = hoverPointIndex === index;
-          const isDragging = draggingPointIndex === index;
+          const isHovered = hoverPointIndexRef.current === index;
+          const isDragging = draggingPointIndexRef.current === index;
 
           // Control point
           ctx.beginPath();
@@ -183,7 +188,17 @@ export function DrawingCanvas({
         });
       }
     }
-  }, [contours, currentPath, width, height, brushSize, selectedContour, currentTool, hoverPointIndex, draggingPointIndex]);
+  }, [contours, currentPath, width, height, brushSize, selectedContour, currentTool]);
+
+  // Render when dependencies change
+  useEffect(() => {
+    renderCanvas();
+  }, [renderCanvas]);
+
+  // Trigger render when hover/drag changes
+  useEffect(() => {
+    renderCanvas();
+  }, [hoverPointIndex, draggingPointIndex, renderCanvas]);
 
   // Handle pointer events with proper coordinate transformation
   const getCanvasPoint = useCallback((e: React.PointerEvent<HTMLCanvasElement>): Point2D => {
@@ -205,8 +220,8 @@ export function DrawingCanvas({
 
   // Find point at position (both in canvas coordinate space)
   const findPointAtPosition = useCallback((pos: Point2D, contour: Contour, threshold: number = 15): number | null => {
-    // Both pos and contour.points are in canvas coordinates (0-800)
-    // So we can directly compare them
+    // Both pos and contour.points are in the canvas's internal coordinate space,
+    // determined by the current canvas width and height. So we can directly compare them.
     for (let i = 0; i < contour.points.length; i++) {
       const p = contour.points[i];
       const dist = Math.sqrt(Math.pow(p.x - pos.x, 2) + Math.pow(p.y - pos.y, 2));
@@ -315,11 +330,8 @@ export function DrawingCanvas({
         e.preventDefault();
         onDeletePoint(selectedContour.contourId, selectedContour.selectedPointIndex);
       }
-    } else if (e.key === 'Insert' && onInsertPoint) {
-      // Insert point (would need mouse position)
-      e.preventDefault();
     }
-  }, [selectedContour, onDeletePoint, onInsertPoint]);
+  }, [selectedContour, onDeletePoint]);
 
   // Handle wheel events would be handled by parent component
   // Remove this effect as we'll handle wheel on the main canvas
@@ -356,7 +368,7 @@ export function DrawingCanvas({
       ref={canvasRef}
       width={width}
       height={height}
-      className={className}
+      className={`focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-2 ${className}`}
       style={{
         position: 'absolute',
         top: 0,
@@ -365,6 +377,7 @@ export function DrawingCanvas({
         touchAction: 'none',
         userSelect: 'none',
         pointerEvents: 'auto', // Always enable for selection
+        outline: 'none', // Remove default outline, use focus-visible instead
         ...canvasStyle
       }}
       onPointerDown={handlePointerDown}

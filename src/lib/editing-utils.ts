@@ -314,7 +314,7 @@ export function smooth3D(
   strength: number = 0.5
 ): Structure3D {
   // Group contours by slice
-  const sliceMap = new Map<number, Contour[]>();
+  let sliceMap = new Map<number, Contour[]>();
   for (const contour of structure.contours) {
     const sliceContours = sliceMap.get(contour.sliceIndex) || [];
     sliceContours.push(contour);
@@ -322,9 +322,11 @@ export function smooth3D(
   }
 
   const sortedSlices = Array.from(sliceMap.keys()).sort((a, b) => a - b);
-  const smoothedContours: Contour[] = [];
 
+  // Apply smoothing iteratively, using results from previous iteration
   for (let iter = 0; iter < iterations; iter++) {
+    const smoothedContours: Contour[] = [];
+    
     for (let i = 0; i < sortedSlices.length; i++) {
       const sliceIndex = sortedSlices[i];
       const contours = sliceMap.get(sliceIndex)!;
@@ -334,7 +336,8 @@ export function smooth3D(
       const nextSlice = i < sortedSlices.length - 1 ? sliceMap.get(sortedSlices[i + 1]) : null;
 
       for (const contour of contours) {
-        // Match with adjacent contours (simplified - assumes one contour per slice)
+        // For simplicity, match first contour of adjacent slices
+        // In production, would use contour matching based on proximity/overlap
         const prevContour = prevSlice?.[0];
         const nextContour = nextSlice?.[0];
 
@@ -360,11 +363,25 @@ export function smooth3D(
         }
       }
     }
+    
+    // Update sliceMap with smoothed results for next iteration
+    sliceMap = new Map<number, Contour[]>();
+    for (const contour of smoothedContours) {
+      const sliceContours = sliceMap.get(contour.sliceIndex) || [];
+      sliceContours.push(contour);
+      sliceMap.set(contour.sliceIndex, sliceContours);
+    }
+  }
+
+  // Collect final results
+  const finalContours: Contour[] = [];
+  for (const contours of sliceMap.values()) {
+    finalContours.push(...contours);
   }
 
   return {
     ...structure,
-    contours: smoothedContours.length > 0 ? smoothedContours : structure.contours
+    contours: finalContours.length > 0 ? finalContours : structure.contours
   };
 }
 
@@ -407,7 +424,7 @@ export function applyMargin(
     };
   } catch (error) {
     console.error('Error applying margin:', error);
-    return contour; // Return original on error
+    return null; // Return null on error
   }
 }
 
@@ -772,6 +789,8 @@ function findBoundary(
 /**
  * Helper: Order boundary points to form a proper contour
  */
+const MAX_BOUNDARY_GAP_DISTANCE = 5; // Maximum distance to consider points connected
+
 function orderBoundaryPoints(points: Point2D[]): Point2D[] {
   if (points.length === 0) return [];
 
@@ -791,7 +810,7 @@ function orderBoundaryPoints(points: Point2D[]): Point2D[] {
       }
     }
 
-    if (closest && minDist < 5) {
+    if (closest && minDist < MAX_BOUNDARY_GAP_DISTANCE) {
       ordered.push(closest);
       remaining.delete(closest);
     } else {
@@ -886,7 +905,7 @@ export function pasteContour(targetSlice: number, structureId?: string): Contour
 
   return {
     ...clipboard.contour,
-    id: `paste_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    id: `paste_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
     sliceIndex: targetSlice,
     structureId: structureId || clipboard.contour.structureId
   };
