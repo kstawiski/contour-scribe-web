@@ -24,11 +24,14 @@ import {
   RotateCw,
   Keyboard,
   Undo,
-  Redo
+  Redo,
+  Maximize2,
+  Grid3x3
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
 import { DrawingCanvas } from "@/components/DrawingCanvas";
+import { MPRViewer } from "@/components/MPRViewer";
 import { useDrawing, DrawingTool } from "@/hooks/useDrawing";
 import { Point2D, interpolateContours } from "@/lib/contour-utils";
 import { exportRTStruct } from "@/lib/rtstruct-export";
@@ -71,6 +74,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [probThreshold, setProbThreshold] = useState([0.5]);
+  const [mprMode, setMprMode] = useState(false);
 
   // Mouse interaction state
   const [isDragging, setIsDragging] = useState(false);
@@ -825,6 +829,20 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       description: 'Interpolate contours',
       category: 'Actions',
     },
+    {
+      key: 'm',
+      handler: () => {
+        setMprMode((prev) => !prev);
+        toast({
+          title: !mprMode ? "MPR View" : "Single View",
+          description: !mprMode
+            ? "Switched to multi-planar reconstruction view"
+            : "Switched to standard single-plane view",
+        });
+      },
+      description: 'Toggle MPR 3D view',
+      category: 'View',
+    },
 
     // Quick structure selection (1-9)
     ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => ({
@@ -850,6 +868,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     interpolateSlices,
     ctImages.length,
     toast,
+    mprMode,
   ]);
 
   // Use keyboard shortcuts
@@ -875,6 +894,22 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant={mprMode ? "default" : "outline"}
+              size="sm"
+              onClick={() => {
+                setMprMode(!mprMode);
+                toast({
+                  title: mprMode ? "Single View" : "MPR View",
+                  description: mprMode
+                    ? "Switched to standard single-plane view"
+                    : "Switched to multi-planar reconstruction view",
+                });
+              }}
+              title="Toggle MPR 3D view (M)"
+            >
+              <Grid3x3 className="w-4 h-4" />
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -925,6 +960,17 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       </div>
 
       {/* Main Content Area */}
+      {mprMode ? (
+        // MPR 3D View
+        <MPRViewer
+          ctImages={ctImages}
+          windowLevel={windowLevel[0]}
+          windowWidth={windowWidth[0]}
+          onWindowLevelChange={(level) => setWindowLevel([level])}
+          onWindowWidthChange={(width) => setWindowWidth([width])}
+        />
+      ) : (
+        // Standard Single-Plane View
       <div className="flex-1 flex overflow-hidden">
         {/* Left Tool Sidebar */}
         <div className="w-16 bg-card border-r border-border flex flex-col p-2 gap-2">
@@ -1386,6 +1432,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
           </div>
         </div>
       </div>
+      )}
 
       {/* Keyboard Shortcuts Help Modal */}
       <KeyboardShortcutsHelp

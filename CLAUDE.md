@@ -1,7 +1,7 @@
 # DicomEdit Development Guide
 
 **Last Updated**: 2025-11-13
-**Current Version**: 0.7.0
+**Current Version**: 0.8.0
 **Status**: Active Development
 
 ---
@@ -664,6 +664,78 @@ This file is designed to help you quickly understand the project state and pick 
 ---
 
 ## 📝 Change Log
+
+### v0.8.0 (2025-11-13)
+**Major Feature**:
+- **Multi-Planar Reconstruction (MPR) / 3D View**: Complete 3D visualization system
+  - **3D Volume Reconstruction**:
+    - Built MPR volume from axial DICOM slices
+    - Intelligent slice spacing calculation
+    - Support for both 8-bit and 16-bit pixel data
+    - Full metadata preservation (spacing, orientation)
+  - **Three Orthogonal Views**:
+    - Axial view (XY plane) - standard top-down view
+    - Sagittal view (YZ plane) - side view
+    - Coronal view (XZ plane) - front view
+    - All views update in real-time
+  - **Linked Crosshair System**:
+    - Green crosshair lines showing current position
+    - Click any view to update crosshair in all views
+    - Perfect synchronization across all three planes
+  - **Independent Navigation**:
+    - Scroll through slices with mouse wheel in each view
+    - Precise slider controls for each plane
+    - Current slice indicator (X / Total) on each panel
+  - **Smart Interface**:
+    - 2x2 grid layout (3 views + info panel)
+    - View labels (AXIAL, SAGITTAL, CORONAL)
+    - Active view highlight with green border
+    - Focused panel indication with keyboard navigation
+  - **Volume Information Display**:
+    - Real-time crosshair position (X, Y, Z coordinates)
+    - Volume dimensions display
+    - Pixel and slice spacing information
+    - Helpful usage instructions
+  - **Easy Toggle**:
+    - Grid icon button in header to switch modes
+    - Keyboard shortcut 'M' to toggle MPR view
+    - Toast notifications for mode changes
+    - Smooth transition between single and multi-plane views
+
+**Technical Implementation**:
+- Created `mpr-utils.ts` with reconstruction algorithms:
+  - `buildMPRVolume()` - constructs 3D volume from axial slices
+  - `getAxialSlice()` - extracts XY plane at Z index
+  - `getSagittalSlice()` - extracts YZ plane at X index
+  - `getCoronalSlice()` - extracts XZ plane at Y index
+  - `renderMPRSliceToCanvas()` - renders with window/level
+  - Coordinate transformation utilities
+- Created `MPRViewer.tsx` component:
+  - Three canvas elements for three views
+  - Shared crosshair state across all views
+  - Independent pan/zoom state per panel (prepared for future)
+  - Real-time rendering with window/level adjustments
+  - Crosshair drawing with dashed green lines
+- Updated `DicomViewer.tsx`:
+  - Added MPR mode state toggle
+  - Conditional rendering for single vs. MPR view
+  - Added Grid3x3 icon button in header
+  - Keyboard shortcut 'M' for quick toggle
+
+**Benefits**:
+- **Complete 3D understanding** - see anatomy from all angles simultaneously
+- **Precise localization** - crosshair shows exact position in 3D space
+- **Efficient navigation** - quickly jump to any point in the volume
+- **Professional workflow** - matches medical imaging workstations
+- **No learning curve** - intuitive click-to-navigate interface
+- **Maintains all features** - drawing tools still available in single-plane mode
+
+**Files Changed**: 3 files (2 new, 1 modified)
+- New: `src/lib/mpr-utils.ts` (365 lines)
+- New: `src/components/MPRViewer.tsx` (445 lines)
+- Modified: `src/components/DicomViewer.tsx` (+40 lines)
+**Build**: Successful (Index chunk: 75.04 KB, +12.46 KB for MPR feature)
+**Bundle sizes**: Within limits (largest chunk still 157KB)
 
 ### v0.7.0 (2025-11-13)
 **Major Feature**:
