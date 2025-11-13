@@ -129,10 +129,13 @@ export function getSagittalSlice(volume: MPRVolume, xIndex: number): MPRSlice {
     : new Uint8Array(sliceSize);
 
   // Extract pixels along X at clampedX
+  // Flip Z direction so head is at top (Z increases from feet to head)
   for (let z = 0; z < depth; z++) {
     for (let y = 0; y < height; y++) {
       const volumeIndex = z * (width * height) + y * width + clampedX;
-      const sliceIndex = z * height + y;
+      // Flip the Z coordinate so the image is right-side up
+      const flippedZ = depth - 1 - z;
+      const sliceIndex = flippedZ * height + y;
       data[sliceIndex] = volumeData[volumeIndex];
     }
   }
@@ -159,10 +162,13 @@ export function getCoronalSlice(volume: MPRVolume, yIndex: number): MPRSlice {
     : new Uint8Array(sliceSize);
 
   // Extract pixels along Y at clampedY
+  // Flip Z direction so head is at top (Z increases from feet to head)
   for (let z = 0; z < depth; z++) {
     for (let x = 0; x < width; x++) {
       const volumeIndex = z * (width * height) + clampedY * width + x;
-      const sliceIndex = z * width + x;
+      // Flip the Z coordinate so the image is right-side up
+      const flippedZ = depth - 1 - z;
+      const sliceIndex = flippedZ * width + x;
       data[sliceIndex] = volumeData[volumeIndex];
     }
   }
@@ -203,7 +209,7 @@ export function updateCrosshair(
 }
 
 /**
- * Render MPR slice to canvas with window/level
+ * Render MPR slice to canvas with window/level and correct aspect ratio
  */
 export function renderMPRSliceToCanvas(
   canvas: HTMLCanvasElement,
@@ -212,13 +218,37 @@ export function renderMPRSliceToCanvas(
   windowLevel: number,
   windowWidth: number
 ): void {
-  canvas.width = slice.width;
-  canvas.height = slice.height;
+  // Calculate physical dimensions for proper aspect ratio
+  const physicalDims = getPhysicalDimensions(volume, slice.plane);
+  const aspectRatio = physicalDims.width / physicalDims.height;
+
+  // Set canvas size to maintain aspect ratio
+  // Use a maximum dimension of 512 pixels for the larger dimension
+  const maxDim = 512;
+  let canvasWidth, canvasHeight;
+
+  if (aspectRatio > 1) {
+    canvasWidth = maxDim;
+    canvasHeight = Math.round(maxDim / aspectRatio);
+  } else {
+    canvasHeight = maxDim;
+    canvasWidth = Math.round(maxDim * aspectRatio);
+  }
+
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
 
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  const imageData = ctx.createImageData(slice.width, slice.height);
+  // Create temporary canvas at original slice dimensions
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = slice.width;
+  tempCanvas.height = slice.height;
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return;
+
+  const imageData = tempCtx.createImageData(slice.width, slice.height);
   const pixels = imageData.data;
 
   const { rescaleIntercept, rescaleSlope } = volume;
@@ -247,11 +277,16 @@ export function renderMPRSliceToCanvas(
     pixels[pixelIndex + 3] = 255;          // A
   }
 
-  ctx.putImageData(imageData, 0, 0);
+  tempCtx.putImageData(imageData, 0, 0);
+
+  // Draw the temporary canvas to the main canvas with correct aspect ratio
+  ctx.imageSmoothingEnabled = false; // Keep pixelated look
+  ctx.drawImage(tempCanvas, 0, 0, canvasWidth, canvasHeight);
 }
 
 /**
  * Convert canvas coordinates to volume coordinates
+ * Accounts for flipped Z direction in sagittal and coronal views
  */
 export function canvasToVolumeCoords(
   canvasX: number,
@@ -271,12 +306,14 @@ export function canvasToVolumeCoords(
     case 'sagittal':
       x = crosshair.sagittalIndex;
       y = Math.floor(canvasY);
-      z = Math.floor(canvasX);
+      // Z is flipped in sagittal view (head at left/X=0)
+      z = volume.depth - 1 - Math.floor(canvasX);
       break;
     case 'coronal':
       x = Math.floor(canvasX);
       y = crosshair.coronalIndex;
-      z = Math.floor(canvasY);
+      // Z is flipped in coronal view (head at top/Y=0)
+      z = volume.depth - 1 - Math.floor(canvasY);
       break;
     default:
       // Should never happen with proper ViewPlane type, but handle defensively

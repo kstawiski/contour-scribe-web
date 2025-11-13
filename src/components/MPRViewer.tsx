@@ -90,20 +90,23 @@ export const MPRViewer = ({
     // Draw crosshair
     const ctx = axialCanvasRef.current.getContext('2d');
     if (ctx) {
+      const canvas = axialCanvasRef.current;
       ctx.strokeStyle = '#00ff00';
       ctx.lineWidth = 1;
       ctx.setLineDash([5, 5]);
 
       // Vertical line (sagittal position)
+      const xPos = (crosshair.sagittalIndex / slice.width) * canvas.width;
       ctx.beginPath();
-      ctx.moveTo(crosshair.sagittalIndex, 0);
-      ctx.lineTo(crosshair.sagittalIndex, slice.height);
+      ctx.moveTo(xPos, 0);
+      ctx.lineTo(xPos, canvas.height);
       ctx.stroke();
 
       // Horizontal line (coronal position)
+      const yPos = (crosshair.coronalIndex / slice.height) * canvas.height;
       ctx.beginPath();
-      ctx.moveTo(0, crosshair.coronalIndex);
-      ctx.lineTo(slice.width, crosshair.coronalIndex);
+      ctx.moveTo(0, yPos);
+      ctx.lineTo(canvas.width, yPos);
       ctx.stroke();
 
       ctx.setLineDash([]);
@@ -123,23 +126,27 @@ export const MPRViewer = ({
       windowWidth
     );
 
-    // Draw crosshair
+    // Draw crosshair (account for flipped Z)
     const ctx = sagittalCanvasRef.current.getContext('2d');
     if (ctx) {
+      const canvas = sagittalCanvasRef.current;
       ctx.strokeStyle = '#00ff00';
       ctx.lineWidth = 1;
       ctx.setLineDash([5, 5]);
 
-      // Vertical line (axial position)
+      // Vertical line (axial position) - Z is flipped
+      const flippedZ = volume.depth - 1 - crosshair.axialIndex;
+      const xPos = (flippedZ / slice.width) * canvas.width;
       ctx.beginPath();
-      ctx.moveTo(crosshair.axialIndex, 0);
-      ctx.lineTo(crosshair.axialIndex, slice.height);
+      ctx.moveTo(xPos, 0);
+      ctx.lineTo(xPos, canvas.height);
       ctx.stroke();
 
       // Horizontal line (coronal position)
+      const yPos = (crosshair.coronalIndex / slice.height) * canvas.height;
       ctx.beginPath();
-      ctx.moveTo(0, crosshair.coronalIndex);
-      ctx.lineTo(slice.width, crosshair.coronalIndex);
+      ctx.moveTo(0, yPos);
+      ctx.lineTo(canvas.width, yPos);
       ctx.stroke();
 
       ctx.setLineDash([]);
@@ -159,23 +166,27 @@ export const MPRViewer = ({
       windowWidth
     );
 
-    // Draw crosshair
+    // Draw crosshair (account for flipped Z)
     const ctx = coronalCanvasRef.current.getContext('2d');
     if (ctx) {
+      const canvas = coronalCanvasRef.current;
       ctx.strokeStyle = '#00ff00';
       ctx.lineWidth = 1;
       ctx.setLineDash([5, 5]);
 
       // Vertical line (sagittal position)
+      const xPos = (crosshair.sagittalIndex / slice.width) * canvas.width;
       ctx.beginPath();
-      ctx.moveTo(crosshair.sagittalIndex, 0);
-      ctx.lineTo(crosshair.sagittalIndex, slice.height);
+      ctx.moveTo(xPos, 0);
+      ctx.lineTo(xPos, canvas.height);
       ctx.stroke();
 
-      // Horizontal line (axial position)
+      // Horizontal line (axial position) - Z is flipped
+      const flippedZ = volume.depth - 1 - crosshair.axialIndex;
+      const yPos = (flippedZ / slice.height) * canvas.height;
       ctx.beginPath();
-      ctx.moveTo(0, crosshair.axialIndex);
-      ctx.lineTo(slice.width, crosshair.axialIndex);
+      ctx.moveTo(0, yPos);
+      ctx.lineTo(canvas.width, yPos);
       ctx.stroke();
 
       ctx.setLineDash([]);
@@ -192,14 +203,28 @@ export const MPRViewer = ({
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
-      // Convert to image coordinates
+      // Convert to canvas coordinates (account for display scaling)
       const scaleX = canvas.width / rect.width;
       const scaleY = canvas.height / rect.height;
-      const imageX = x * scaleX;
-      const imageY = y * scaleY;
+      const canvasX = x * scaleX;
+      const canvasY = y * scaleY;
+
+      // Get the slice to know its dimensions
+      let slice;
+      if (plane === 'axial') {
+        slice = getAxialSlice(volume, crosshair.axialIndex);
+      } else if (plane === 'sagittal') {
+        slice = getSagittalSlice(volume, crosshair.sagittalIndex);
+      } else {
+        slice = getCoronalSlice(volume, crosshair.coronalIndex);
+      }
+
+      // Convert from canvas coordinates to slice pixel coordinates
+      const sliceX = (canvasX / canvas.width) * slice.width;
+      const sliceY = (canvasY / canvas.height) * slice.height;
 
       // Update crosshair based on plane
-      const volumeCoords = canvasToVolumeCoords(imageX, imageY, plane, crosshair, volume);
+      const volumeCoords = canvasToVolumeCoords(sliceX, sliceY, plane, crosshair, volume);
       setCrosshair({
         axialIndex: volumeCoords.z,
         sagittalIndex: volumeCoords.x,

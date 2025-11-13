@@ -330,19 +330,21 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     return canvasToWorldUtil(canvasX, canvasY, currentImage, config);
   };
 
-  // Handle wheel events for slice navigation
+  // Handle wheel events for slice navigation and zoom
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    
-    if (viewerTool !== "zoom") {
+
+    // Ctrl+scroll for zoom (works in any tool mode)
+    if (e.ctrlKey || e.metaKey) {
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      setZoom(prev => Math.max(0.1, Math.min(5, prev * delta)));
+    } else {
+      // Regular scroll for slice navigation (works in any tool mode)
       const delta = e.deltaY > 0 ? 1 : -1;
       setCurrentSlice(prev => {
         const newSlice = prev + delta;
         return Math.max(0, Math.min(ctImages.length - 1, newSlice));
       });
-    } else {
-      const delta = e.deltaY > 0 ? 0.9 : 1.1;
-      setZoom(prev => Math.max(0.1, Math.min(5, prev * delta)));
     }
   };
 
@@ -372,7 +374,18 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
   // Mouse event handlers for Pan and Windowing tools
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (viewerTool === "pan" || viewerTool === "windowing") {
+    // Middle mouse button (button 1) for pan
+    if (e.button === 1) {
+      e.preventDefault();
+      setIsDragging(true);
+      setLastMousePos({ x: e.clientX, y: e.clientY });
+      // Temporarily switch to pan mode
+      setViewerTool("pan");
+      return;
+    }
+
+    // Left button with pan or windowing tool
+    if (e.button === 0 && (viewerTool === "pan" || viewerTool === "windowing")) {
       setIsDragging(true);
       setLastMousePos({ x: e.clientX, y: e.clientY });
     }
@@ -459,7 +472,11 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     setLastMousePos({ x: e.clientX, y: e.clientY });
   };
 
-  const handleCanvasMouseUp = () => {
+  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // If middle button was used for pan, restore previous tool
+    if (e.button === 1 && isDragging) {
+      setViewerTool("select");
+    }
     setIsDragging(false);
   };
 
@@ -875,9 +892,9 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   useKeyboardShortcuts(keyboardShortcuts, { enabled: true });
 
   return (
-    <div className="min-h-screen bg-background flex flex-col animate-fade-in">
+    <div className="h-screen bg-background flex flex-col animate-fade-in overflow-hidden">
       {/* Compact Header */}
-      <div className="bg-card border-b border-border px-4 py-2">
+      <div className="bg-card border-b border-border px-4 py-2 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             {onBack && (
@@ -1054,8 +1071,11 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                   imageRendering: "pixelated",
                   width: "800px",
                   height: "800px",
+                  maxWidth: "100%",
+                  maxHeight: "100%",
                   border: "2px solid #333",
                   cursor:
+                    isDragging && viewerTool === "pan" ? "grabbing" :
                     viewerTool === "pan" ? "grab" :
                     viewerTool === "windowing" ? "crosshair" :
                     drawing.currentTool === "brush" ? "crosshair" :
@@ -1068,6 +1088,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                 onMouseMove={handleCanvasMouseMove}
                 onMouseUp={handleCanvasMouseUp}
                 onMouseLeave={handleCanvasMouseLeave}
+                onContextMenu={(e) => e.preventDefault()}
               />
 
               <DrawingCanvas
@@ -1181,13 +1202,12 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
               )}
 
               <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1.5 rounded text-xs">
-                {viewerTool === "select" && drawing.currentTool === "select" && "🖱️ Scroll: Navigate slices"}
-                {viewerTool === "pan" && "🖱️ Drag: Pan • Scroll: Navigate"}
-                {viewerTool === "zoom" && "🖱️ Scroll: Zoom in/out"}
-                {viewerTool === "windowing" && "🖱️ Drag: Adjust brightness/contrast"}
-                {drawing.currentTool === "brush" && "🖱️ Draw contour • Scroll: Navigate"}
-                {drawing.currentTool === "eraser" && "🖱️ Erase contours • Scroll: Navigate"}
-                {drawing.currentTool === "polygon" && "🖱️ Click: Add points • Double-click: Finish"}
+                {viewerTool === "select" && drawing.currentTool === "select" && "🖱️ Scroll: Slices • Ctrl+Scroll: Zoom • Middle: Pan"}
+                {viewerTool === "pan" && "🖱️ Drag: Pan • Scroll: Slices • Ctrl+Scroll: Zoom"}
+                {viewerTool === "windowing" && "🖱️ Drag: Brightness/Contrast • Scroll: Slices"}
+                {drawing.currentTool === "brush" && "🖱️ Draw • Scroll: Slices • Ctrl+Scroll: Zoom"}
+                {drawing.currentTool === "eraser" && "🖱️ Erase • Scroll: Slices • Ctrl+Scroll: Zoom"}
+                {drawing.currentTool === "polygon" && "🖱️ Click: Points • Double-click: Finish • Scroll: Slices"}
               </div>
             </div>
           </div>
