@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -547,7 +547,8 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
   const interpolateSlices = () => {
     if (drawing.activeStructureId) {
-      const activeStructure = drawing.structures.find(s => s.id === drawing.activeStructureId);
+      const activeStructureId = drawing.activeStructureId;
+      const activeStructure = drawing.structures.find(s => s.id === activeStructureId);
       if (activeStructure && activeStructure.contours.length >= 2) {
         // Find slices with contours
         const slicesWithContours = [...new Set(activeStructure.contours.map(c => c.sliceIndex))].sort((a, b) => a - b);
@@ -571,7 +572,10 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
                 if (interpolatedContour) {
                   // Add the interpolated contour to the drawing
-                  drawing.addContour(interpolatedContour);
+                  drawing.addContourToStructure(
+                    activeStructureId,
+                    interpolatedContour
+                  );
                   interpolatedCount++;
                 }
               }

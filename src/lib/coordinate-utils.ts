@@ -29,19 +29,17 @@ function calculateImageTransform(
 ): ImageTransform {
   const { canvasSize, zoom, pan } = config;
   const imageAspect = image.width / image.height;
-  let drawWidth = image.width;
-  let drawHeight = image.height;
+  let drawWidth: number;
+  let drawHeight: number;
 
-  // Scale to fit within canvas with 5% margin
+  // Scale image to match viewer rendering (always fit within 95% of canvas)
   const maxSize = canvasSize * 0.95;
-  if (drawWidth > maxSize || drawHeight > maxSize) {
-    if (imageAspect > 1) {
-      drawWidth = maxSize;
-      drawHeight = maxSize / imageAspect;
-    } else {
-      drawHeight = maxSize;
-      drawWidth = maxSize * imageAspect;
-    }
+  if (imageAspect >= 1) {
+    drawWidth = maxSize;
+    drawHeight = maxSize / imageAspect;
+  } else {
+    drawHeight = maxSize;
+    drawWidth = maxSize * imageAspect;
   }
 
   // Apply zoom
@@ -75,12 +73,9 @@ export function worldToCanvas(
 ): Point2D {
   const imagePosition = image.imagePosition || [0, 0, 0];
   const pixelSpacing = image.pixelSpacing || [1, 1];
-  const orientation = image.imageOrientation || [1, 0, 0, 0, 1, 0];
-
-  // For proper DICOM coordinate handling, we would need to:
-  // 1. Calculate vector from image position to world point
-  // 2. Project onto row and column direction cosines
-  // However, for typical axial slices aligned with patient axes, the simplified approach works:
+  // For proper DICOM coordinate handling with arbitrary orientations we would need to apply
+  // the orientation matrix. The viewer currently renders axis-aligned axial slices, so the
+  // simplified spacing-based approach matches the renderer.
   const pixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
   const pixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
 

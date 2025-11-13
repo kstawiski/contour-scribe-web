@@ -144,6 +144,22 @@ export function useDrawing() {
     ]);
   }, [setStructures]);
 
+  const addContourToStructure = useCallback(
+    (structureId: string, contour: Contour) => {
+      setStructures(prevStructures =>
+        prevStructures.map(structure =>
+          structure.id === structureId
+            ? {
+                ...structure,
+                contours: [...structure.contours, contour],
+              }
+            : structure
+        )
+      );
+    },
+    [setStructures]
+  );
+
   const removeStructure = useCallback((structureId: string) => {
     setStructures(prevStructures =>
       prevStructures.filter(s => s.id !== structureId)
@@ -196,6 +212,7 @@ export function useDrawing() {
     cancelDrawing,
     eraseAt,
     addStructure,
+    addContourToStructure,
     removeStructure,
     toggleStructureVisibility,
     getContoursForSlice,

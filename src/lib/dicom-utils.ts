@@ -62,9 +62,16 @@ export class DicomProcessor {
       // Series and instance information
       const seriesInstanceUID = dataSet.string('x0020000e') || '';
       const sopInstanceUID = dataSet.string('x00080018') || '';
+      const sopClassUID = dataSet.string('x00080016') || undefined;
+      const frameOfReferenceUID = dataSet.string('x00200052') || undefined;
+      const studyInstanceUID = dataSet.string('x0020000d') || undefined;
 
       // Image position, slice location, and spacing information
       const imagePosition = dataSet.string('x00200032')?.split('\\').map(Number);
+      const imageOrientation = dataSet
+        .string('x00200037')
+        ?.split('\\')
+        .map(Number);
       const sliceLocation = dataSet.floatString('x00201041');
       const sliceThickness = dataSet.floatString('x00180050');
       const pixelSpacing = dataSet.string('x00280030')?.split('\\').map(Number);
@@ -101,10 +108,14 @@ export class DicomProcessor {
         rescaleSlope,
         seriesInstanceUID,
         sopInstanceUID,
+        sopClassUID,
         imagePosition,
+        imageOrientation,
         sliceLocation,
         sliceThickness,
         pixelSpacing,
+        frameOfReferenceUID,
+        studyInstanceUID,
       };
     } catch (error) {
       console.error('Error parsing DICOM file:', error);

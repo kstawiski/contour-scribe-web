@@ -20,45 +20,20 @@ interface ExportContour {
 }
 
 /**
- * Convert canvas/world coordinates to DICOM patient coordinates.
- * 
- * This function properly handles the DICOM Image Orientation (Patient) attribute
- * to transform from pixel coordinates to 3D patient coordinate system.
- * 
- * The transformation follows the DICOM standard:
- * P = S + (X * ΔC * Xc) + (Y * ΔR * Yc)
- * where:
- *   P = Patient coordinates [x, y, z]
- *   S = Image Position (Patient)
- *   X, Y = Column and Row indices (from point.x, point.y)
- *   ΔC, ΔR = Pixel spacing (column, row)
- *   Xc, Yc = Direction cosines from Image Orientation
+ * Convert world coordinates (patient space) to full 3D DICOM coordinates.
+ *
+ * The drawing system already stores points in patient X/Y millimetres, so we
+ * simply add the slice's Z coordinate to obtain the full 3D position.
  */
 function worldToDicomCoordinates(
   point: Point2D,
   image: DicomImage
 ): { x: number; y: number; z: number } {
-  // Get image position and orientation
-  const position = image.imagePosition || [0, 0, 0];
-  const orientation = image.imageOrientation || [1, 0, 0, 0, 1, 0];
-  const spacing = image.pixelSpacing || [1, 1];
+  // World coordinates are already in patient space (mm). We only need to attach
+  // the Z component from the slice metadata to form a full 3D coordinate.
+  const z = image.sliceLocation ?? image.imagePosition?.[2] ?? 0;
 
-  // Image orientation defines the direction cosines of the first row and first column
-  // orientation = [rowX, rowY, rowZ, colX, colY, colZ]
-  const rowCosines = [orientation[0], orientation[1], orientation[2]];
-  const colCosines = [orientation[3], orientation[4], orientation[5]];
-
-  // In our coordinate system, point.x represents the column index and point.y represents the row index
-  const column = point.x;
-  const row = point.y;
-
-  // Convert from pixel coordinates to patient coordinates using the DICOM formula:
-  // Patient coordinates = Image Position + (column * spacing[0] * rowCosines) + (row * spacing[1] * colCosines)
-  const x = position[0] + column * spacing[0] * rowCosines[0] + row * spacing[1] * colCosines[0];
-  const y = position[1] + column * spacing[0] * rowCosines[1] + row * spacing[1] * colCosines[1];
-  const z = position[2] + column * spacing[0] * rowCosines[2] + row * spacing[1] * colCosines[2];
-
-  return { x, y, z };
+  return { x: point.x, y: point.y, z };
 }
 
 /**
@@ -90,37 +65,50 @@ export function exportRTStructAsJSON(
     structures: (() => {
       let roiCounter = 1;
       return structures.map(structure => {
-        const roiNumberFromId = parseInt(structure.id.replace(/\D/g, ''));
+        const roiNumberFromId = parseInt(structure.id.replace(/\D/g, ''), 10);
         const roiNumber = roiNumberFromId || roiCounter++;
+        const contourExportData = structure.contours.reduce<
+          Array<{
+            sliceIndex: number;
+            sopInstanceUID: string;
+            numberOfPoints: number;
+            contourGeometricType: 'CLOSED_PLANAR' | 'OPEN_PLANAR';
+            contourData: number[];
+          }>
+        >((acc, contour) => {
+          const image = ctImages[contour.sliceIndex];
+          if (!image) {
+            console.warn(`Image not found for slice ${contour.sliceIndex}`);
+            return acc;
+          }
+
+          const dicomPoints = contour.points.map(point =>
+            worldToDicomCoordinates(point, image)
+          );
+
+          acc.push({
+            sliceIndex: contour.sliceIndex,
+            sopInstanceUID: image.sopInstanceUID,
+            numberOfPoints: contour.points.length,
+            contourGeometricType: contour.isClosed
+              ? 'CLOSED_PLANAR'
+              : 'OPEN_PLANAR',
+            contourData: dicomPoints.flatMap(p => [p.x, p.y, p.z]),
+          });
+
+          return acc;
+        }, []);
+
         return {
           id: structure.id,
           name: structure.name,
           color: structure.color,
           visible: structure.visible,
-          roiNumber: roiNumber,
-          contours: structure.contours.map(contour => {
-        const image = ctImages[contour.sliceIndex];
-        if (!image) {
-          console.warn(`Image not found for slice ${contour.sliceIndex}`);
-          return null;
-        }
-
-        // Convert all points to DICOM patient coordinates
-        const dicomPoints = contour.points.map(point =>
-          worldToDicomCoordinates(point, image)
-        );
-
-        return {
-          sliceIndex: contour.sliceIndex,
-          sopInstanceUID: image.sopInstanceUID,
-          numberOfPoints: contour.points.length,
-          contourGeometricType: contour.isClosed ? 'CLOSED_PLANAR' : 'OPEN_PLANAR',
-          // Flatten to array: [x1, y1, z1, x2, y2, z2, ...]
-          contourData: dicomPoints.flatMap(p => [p.x, p.y, p.z]),
+          roiNumber,
+          contours: contourExportData,
         };
-        }).filter(c => c !== null),
-      };
-    })})(),
+      });
+    })(),
   };
 
   // Create a blob and download
