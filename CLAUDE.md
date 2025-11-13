@@ -1,7 +1,7 @@
 # DicomEdit Development Guide
 
 **Last Updated**: 2025-11-13
-**Current Version**: 0.5.0
+**Current Version**: 0.6.0
 **Status**: Active Development
 
 ---
@@ -154,6 +154,15 @@ App (ErrorBoundary, Router, QueryClient)
 - ✅ Build optimization (successful production build)
 
 ### Recently Completed (Nov 13, 2025)
+- **Undo/Redo System**: Complete history management for contour operations (v0.6.0)
+  - Implemented useHistory hook with snapshot-based state management
+  - Integrated history into useDrawing hook for seamless undo/redo
+  - Keyboard shortcuts: Ctrl+Z (undo), Ctrl+Y (redo), Ctrl+Shift+Z (redo alternate)
+  - UI buttons with disabled state when no history available
+  - 50-action history limit (configurable)
+  - Toast notifications for undo/redo actions
+  - Tracks: drawing, erasing, adding/removing structures, clearing slices
+  - Visibility toggles don't create history entries (UI-only state)
 - **Code Splitting & Bundle Optimization**: Reduced initial bundle size (v0.5.0)
   - Implemented lazy loading for all routes (Admin, Index, NotFound)
   - Configured Vite manual chunk splitting for vendor libraries
@@ -203,15 +212,18 @@ App (ErrorBoundary, Router, QueryClient)
   - ✅ `+` / `-` - Zoom in/out
   - ✅ `I` - Interpolate contours
   - ✅ `Escape` - Cancel polygon drawing
-  - Note: Space+Drag and Ctrl+Z/Y for future (needs additional features)
+  - ✅ `Ctrl+Z` / `Ctrl+Y` - Undo/Redo (v0.6.0)
+  - Note: Space+Drag for future (needs additional features)
   - Files: `src/hooks/useKeyboardShortcuts.ts`, `src/components/KeyboardShortcutsHelp.tsx`, `DicomViewer.tsx`
 
-- [ ] **Undo/Redo System**
-  - History stack for contour operations
-  - Support for Ctrl+Z / Ctrl+Y
-  - Snapshot-based state management
-  - Limit history size (e.g., 50 operations)
-  - Files: `src/hooks/useHistory.ts`, integrate into `useDrawing.ts`
+- [x] **Undo/Redo System** ✅ Completed (v0.6.0)
+  - ✅ History stack for contour operations
+  - ✅ Support for Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z
+  - ✅ Snapshot-based state management
+  - ✅ 50-action history limit (configurable)
+  - ✅ UI buttons with disabled states
+  - ✅ Toast notifications
+  - Files: `src/hooks/useHistory.ts`, `useDrawing.ts`, `DicomViewer.tsx`
 
 - [x] **HU Value Display on Hover** ✅ Completed (v0.4.0)
   - ✅ Show Hounsfield Unit at cursor position
@@ -478,7 +490,6 @@ const structure = drawing.structures.find(s => s.id === id);
 ## ⚠️ Known Issues & Technical Debt
 
 ### Critical Issues
-- **No Undo/Redo**: Users can't recover from mistakes (Priority: HIGH)
 - **Mock Data Fallback**: DicomLoader creates fake data on parse failure - should show error instead (Priority: MEDIUM)
 
 ### Technical Debt
@@ -653,6 +664,36 @@ This file is designed to help you quickly understand the project state and pick 
 ---
 
 ## 📝 Change Log
+
+### v0.6.0 (2025-11-13)
+**Major Feature**:
+- **Undo/Redo System**: Complete history management for contour editing
+  - Created useHistory hook for generic state history management
+  - Integrated history into useDrawing hook with snapshot-based approach
+  - Keyboard shortcuts: Ctrl+Z (undo), Ctrl+Y (redo), Ctrl+Shift+Z (redo alternate)
+  - UI buttons with proper disabled states and tooltips
+  - 50-action history limit (configurable via maxHistorySize option)
+  - Toast notifications for user feedback on undo/redo actions
+  - Tracks all editing operations: drawing, erasing, adding/removing structures, clearing slices
+  - Visibility toggles excluded from history (UI-only state, not data mutation)
+
+**Technical Implementation**:
+- useHistory hook with past/present/future stack pattern
+- Automatic history recording with optional recordHistory flag
+- Undo/redo flag to prevent circular history recording
+- canUndo and canRedo computed properties
+- clearHistory function for data reload scenarios
+
+**Benefits**:
+- Users can confidently edit without fear of mistakes
+- Essential clinical feature for precision medical work
+- Improved workflow efficiency (no need to redraw from scratch)
+- Standard UX pattern familiar to all users
+
+**Files Changed**: 3 files (1 new, 2 modified), 239 additions, 40 deletions
+**New Files**: `src/hooks/useHistory.ts`
+**Modified Files**: `src/hooks/useDrawing.ts`, `src/components/DicomViewer.tsx`
+**Build**: Successful (Index chunk: 60.93 KB, +2.63 KB from v0.5.0)
 
 ### v0.5.0 (2025-11-13)
 **Major Feature**:

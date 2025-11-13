@@ -22,7 +22,9 @@ import {
   Scissors,
   Copy,
   RotateCw,
-  Keyboard
+  Keyboard,
+  Undo,
+  Redo
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
@@ -728,6 +730,52 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
     // Actions
     {
+      key: 'z',
+      ctrl: true,
+      handler: () => {
+        if (drawing.canUndo) {
+          drawing.undo();
+          toast({
+            title: 'Undo',
+            description: 'Last action has been undone',
+          });
+        }
+      },
+      description: 'Undo last action',
+      category: 'Actions',
+    },
+    {
+      key: 'y',
+      ctrl: true,
+      handler: () => {
+        if (drawing.canRedo) {
+          drawing.redo();
+          toast({
+            title: 'Redo',
+            description: 'Last action has been redone',
+          });
+        }
+      },
+      description: 'Redo last action',
+      category: 'Actions',
+    },
+    {
+      key: 'z',
+      ctrl: true,
+      shift: true,
+      handler: () => {
+        if (drawing.canRedo) {
+          drawing.redo();
+          toast({
+            title: 'Redo',
+            description: 'Last action has been redone',
+          });
+        }
+      },
+      description: 'Redo last action (alternate)',
+      category: 'Actions',
+    },
+    {
       key: 's',
       ctrl: true,
       handler: () => {
@@ -813,6 +861,38 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
                 title="Keyboard shortcuts (? or H)"
               >
                 <Keyboard className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  drawing.undo();
+                  toast({
+                    title: 'Undo',
+                    description: 'Last action has been undone',
+                  });
+                }}
+                disabled={!drawing.canUndo}
+                title="Undo (Ctrl+Z)"
+              >
+                <Undo className="w-4 h-4" />
+                Undo
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  drawing.redo();
+                  toast({
+                    title: 'Redo',
+                    description: 'Last action has been redone',
+                  });
+                }}
+                disabled={!drawing.canRedo}
+                title="Redo (Ctrl+Y)"
+              >
+                <Redo className="w-4 h-4" />
+                Redo
               </Button>
               <Button variant="outline" size="sm" onClick={resetView}>
                 <RotateCcw className="w-4 h-4" />

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Point2D, Contour, Structure3D, closeContour, smoothContour } from '@/lib/contour-utils';
+import { useHistory } from './useHistory';
 
 export type DrawingTool = 'select' | 'brush' | 'eraser' | 'polygon' | 'interpolate';
 
@@ -7,22 +8,32 @@ export interface DrawingState {
   isDrawing: boolean;
   currentTool: DrawingTool;
   currentPath: Point2D[];
-  structures: Structure3D[];
   activeStructureId: string | null;
   brushSize: number;
   eraserSize: number;
 }
 
 export function useDrawing() {
+  // Non-historical state (UI state that doesn't need undo/redo)
   const [state, setState] = useState<DrawingState>({
     isDrawing: false,
     currentTool: 'select',
     currentPath: [],
-    structures: [],
     activeStructureId: null,
     brushSize: 3,
     eraserSize: 10
   });
+
+  // Historical state (structures that can be undone/redone)
+  const {
+    state: structures,
+    setState: setStructures,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    clearHistory,
+  } = useHistory<Structure3D[]>([], { maxHistorySize: 50 });
 
   const setTool = useCallback((tool: DrawingTool) => {
     setState(prev => ({ ...prev, currentTool: tool }));
@@ -56,46 +67,48 @@ export function useDrawing() {
   }, []);
 
   const finishDrawing = useCallback((sliceIndex: number) => {
-    setState(prev => {
-      if (!prev.isDrawing || prev.currentPath.length < 2 || !prev.activeStructureId) {
-        return { ...prev, isDrawing: false, currentPath: [] };
-      }
+    if (!state.isDrawing || state.currentPath.length < 2 || !state.activeStructureId) {
+      setState(prev => ({ ...prev, isDrawing: false, currentPath: [] }));
+      return;
+    }
 
-      let finalPath = prev.currentPath;
-      
-      // Auto-close contours for brush and polygon tools
-      if (prev.currentTool === 'brush' || prev.currentTool === 'polygon') {
-        finalPath = closeContour(finalPath);
-        finalPath = smoothContour(finalPath, 1); // Light smoothing
-      }
+    let finalPath = state.currentPath;
 
-      const newContour: Contour = {
-        id: `contour_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        points: finalPath,
-        sliceIndex,
-        structureId: prev.activeStructureId,
-        isClosed: prev.currentTool === 'brush' || prev.currentTool === 'polygon',
-        color: prev.structures.find(s => s.id === prev.activeStructureId)?.color || '#ff0000'
-      };
+    // Auto-close contours for brush and polygon tools
+    if (state.currentTool === 'brush' || state.currentTool === 'polygon') {
+      finalPath = closeContour(finalPath);
+      finalPath = smoothContour(finalPath, 1); // Light smoothing
+    }
 
-      const updatedStructures = prev.structures.map(structure => {
-        if (structure.id === prev.activeStructureId) {
+    const newContour: Contour = {
+      id: `contour_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      points: finalPath,
+      sliceIndex,
+      structureId: state.activeStructureId,
+      isClosed: state.currentTool === 'brush' || state.currentTool === 'polygon',
+      color: structures.find(s => s.id === state.activeStructureId)?.color || '#ff0000'
+    };
+
+    // Update structures with history
+    setStructures(prevStructures =>
+      prevStructures.map(structure => {
+        if (structure.id === state.activeStructureId) {
           return {
             ...structure,
             contours: [...structure.contours, newContour]
           };
         }
         return structure;
-      });
+      })
+    );
 
-      return {
-        ...prev,
-        isDrawing: false,
-        currentPath: [],
-        structures: updatedStructures
-      };
-    });
-  }, []);
+    // Clear drawing state (without history)
+    setState(prev => ({
+      ...prev,
+      isDrawing: false,
+      currentPath: []
+    }));
+  }, [state.isDrawing, state.currentPath, state.activeStructureId, state.currentTool, structures, setStructures]);
 
   const cancelDrawing = useCallback(() => {
     setState(prev => ({
@@ -106,70 +119,73 @@ export function useDrawing() {
   }, []);
 
   const eraseAt = useCallback((point: Point2D, sliceIndex: number) => {
-    setState(prev => {
-      const updatedStructures = prev.structures.map(structure => ({
+    setStructures(prevStructures =>
+      prevStructures.map(structure => ({
         ...structure,
         contours: structure.contours.filter(contour => {
           if (contour.sliceIndex !== sliceIndex) return true;
-          
+
           // Check if any point in the contour is within eraser radius
           return !contour.points.some(p => {
             const distance = Math.sqrt(
               Math.pow(p.x - point.x, 2) + Math.pow(p.y - point.y, 2)
             );
-            return distance <= prev.eraserSize;
+            return distance <= state.eraserSize;
           });
         })
-      }));
-
-      return { ...prev, structures: updatedStructures };
-    });
-  }, []);
+      }))
+    );
+  }, [state.eraserSize, setStructures]);
 
   const addStructure = useCallback((structure: Omit<Structure3D, 'contours'>) => {
-    setState(prev => ({
-      ...prev,
-      structures: [...prev.structures, { ...structure, contours: [] }]
-    }));
-  }, []);
+    setStructures(prevStructures => [
+      ...prevStructures,
+      { ...structure, contours: [] }
+    ]);
+  }, [setStructures]);
 
   const removeStructure = useCallback((structureId: string) => {
+    setStructures(prevStructures =>
+      prevStructures.filter(s => s.id !== structureId)
+    );
+
+    // Clear active structure if it was removed (without history)
     setState(prev => ({
       ...prev,
-      structures: prev.structures.filter(s => s.id !== structureId),
       activeStructureId: prev.activeStructureId === structureId ? null : prev.activeStructureId
     }));
-  }, []);
+  }, [setStructures]);
 
   const toggleStructureVisibility = useCallback((structureId: string) => {
-    setState(prev => ({
-      ...prev,
-      structures: prev.structures.map(s =>
+    // Visibility toggle doesn't need history (it's more of a UI state)
+    setStructures(prevStructures =>
+      prevStructures.map(s =>
         s.id === structureId ? { ...s, visible: !s.visible } : s
-      )
-    }));
-  }, []);
+      ),
+      false // Don't record in history
+    );
+  }, [setStructures]);
 
   const getContoursForSlice = useCallback((sliceIndex: number) => {
-    return state.structures.flatMap(structure =>
-      structure.visible 
+    return structures.flatMap(structure =>
+      structure.visible
         ? structure.contours.filter(contour => contour.sliceIndex === sliceIndex)
         : []
     );
-  }, [state.structures]);
+  }, [structures]);
 
   const clearSlice = useCallback((sliceIndex: number) => {
-    setState(prev => ({
-      ...prev,
-      structures: prev.structures.map(structure => ({
+    setStructures(prevStructures =>
+      prevStructures.map(structure => ({
         ...structure,
         contours: structure.contours.filter(contour => contour.sliceIndex !== sliceIndex)
       }))
-    }));
-  }, []);
+    );
+  }, [setStructures]);
 
   return {
     ...state,
+    structures,
     setTool,
     setBrushSize,
     setEraserSize,
@@ -183,6 +199,12 @@ export function useDrawing() {
     removeStructure,
     toggleStructureVisibility,
     getContoursForSlice,
-    clearSlice
+    clearSlice,
+    setStructures,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    clearHistory,
   };
 }
