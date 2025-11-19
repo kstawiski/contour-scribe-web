@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { Point2D, Contour, Structure3D, closeContour, smoothContour } from '@/lib/contour-utils';
+import { Structure3D, Contour, Point2D, BooleanOp, ImageData2D } from "@/types";
+import { closeContour, smoothContour } from '@/lib/contour-utils';
 import { useHistory } from './useHistory';
 import * as EditUtils from '@/lib/editing-utils';
 
@@ -161,9 +162,9 @@ export function useDrawing() {
         prevStructures.map(structure =>
           structure.id === structureId
             ? {
-                ...structure,
-                contours: [...structure.contours, contour],
-              }
+              ...structure,
+              contours: [...structure.contours, contour],
+            }
             : structure
         )
       );
@@ -497,7 +498,7 @@ export function useDrawing() {
 
   // Segmentation Operations
   const performThresholdSegmentation = useCallback((
-    imageData: EditUtils.ImageData2D,
+    imageData: ImageData2D,
     minHU: number,
     maxHU: number,
     sliceIndex: number,
@@ -535,7 +536,7 @@ export function useDrawing() {
   }, [state.activeStructureId, structures, setStructures]);
 
   const performRegionGrowing = useCallback((
-    imageData: EditUtils.ImageData2D,
+    imageData: ImageData2D,
     seedPoint: Point2D,
     tolerance: number,
     sliceIndex: number,
@@ -577,7 +578,7 @@ export function useDrawing() {
   }, [state.activeStructureId, structures, setStructures]);
 
   const performMagicWand = useCallback((
-    imageData: EditUtils.ImageData2D,
+    imageData: ImageData2D,
     seedPoint: Point2D,
     tolerance: number,
     sliceIndex: number,

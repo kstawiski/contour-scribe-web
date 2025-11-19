@@ -1,5 +1,5 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
-import { Point2D, Contour } from '@/lib/contour-utils';
+import { useRef, useEffect, useCallback, useState, memo } from 'react';
+import { Point2D, Contour } from "@/types";
 import { DrawingTool, SelectedContour } from '@/hooks/useDrawing';
 
 interface DrawingCanvasProps {
@@ -26,7 +26,7 @@ interface DrawingCanvasProps {
   canvasStyle?: React.CSSProperties;
 }
 
-export function DrawingCanvas({
+export function DrawingCanvasComponent({
   width,
   height,
   contours,
@@ -100,11 +100,11 @@ export function DrawingCanvas({
       contour.points.slice(1).forEach(point => {
         ctx.lineTo(point.x, point.y);
       });
-      
+
       if (contour.isClosed) {
         ctx.closePath();
       }
-      
+
       ctx.stroke();
     });
 
@@ -390,3 +390,5 @@ export function DrawingCanvas({
     />
   );
 }
+
+export const DrawingCanvas = memo(DrawingCanvasComponent);

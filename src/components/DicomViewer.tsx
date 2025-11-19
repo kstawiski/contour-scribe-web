@@ -41,19 +41,23 @@ import {
   BarChart3,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { DicomImage, DicomRTStruct, DicomProcessor } from "@/lib/dicom-utils";
+import { DicomImage, DicomRTStruct, Point2D, BooleanOp, ImageData2D } from "@/types";
+import { DicomProcessor } from "@/lib/dicom-utils";
 import { DrawingCanvas } from "@/components/DrawingCanvas";
 import { MPRViewer } from "@/components/MPRViewer";
 import { EditingPanel } from "@/components/EditingPanel";
 import { useDrawing, DrawingTool } from "@/hooks/useDrawing";
-import { Point2D, interpolateContours } from "@/lib/contour-utils";
+import { interpolateContours } from "@/lib/contour-utils";
 import { exportRTStruct } from "@/lib/rtstruct-export";
 import { worldToCanvas as worldToCanvasUtil, canvasToWorld as canvasToWorldUtil } from "@/lib/coordinate-utils";
 import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
+import { ViewerToolbar } from "@/components/viewer/ViewerToolbar";
+import { StructureList } from "@/components/viewer/StructureList";
+import { ViewerCanvas } from "@/components/viewer/ViewerCanvas";
 import { HUOverlay } from "@/components/HUOverlay";
 import { WINDOW_PRESETS } from "@/lib/window-presets";
-import { BooleanOp, ImageData2D } from "@/lib/editing-utils";
+
 
 interface DicomViewerProps {
   ctImages: DicomImage[];
@@ -62,13 +66,7 @@ interface DicomViewerProps {
   onBack?: () => void;
 }
 
-interface RTStructure {
-  id: string;
-  name: string;
-  color: string;
-  visible: boolean;
-  isEditing: boolean;
-}
+
 
 type ViewerTool = "select" | "pan" | "zoom" | "windowing";
 
@@ -117,39 +115,34 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   const [cineFPS] = useState(10);
   const cineIntervalRef = useRef<number | null>(null);
 
-  // RT Structure state - only include RT structures
-  const [rtStructures, setRTStructures] = useState<RTStructure[]>(() => {
-    const structures: RTStructure[] = [];
-    
-    // Add RT structures if available
-    if (rtStruct?.structures) {
-      rtStruct.structures.forEach((rtStructure, index) => {
-        structures.push({
-          id: `rt_${index}`,
-          name: rtStructure.name,
-          color: `rgb(${Math.round(rtStructure.color[0])}, ${Math.round(rtStructure.color[1])}, ${Math.round(rtStructure.color[2])})`,
-          visible: true,
-          isEditing: false
-        });
-      });
-    }
-    
-    return structures;
-  });
+
 
   // Initialize drawing structures from RT structures
   useEffect(() => {
     if (drawing.structures.length === 0 && rtStruct?.structures) {
-      rtStruct.structures.forEach((rtStructure, index) => {
-        drawing.addStructure({
-          id: `rt_${index}`,
+      const newStructures = rtStruct.structures.map((rtStructure, index) => {
+        const color = `rgb(${Math.round(rtStructure.color[0])}, ${Math.round(rtStructure.color[1])}, ${Math.round(rtStructure.color[2])})`;
+        const structureId = `rt_${index}`;
+
+        return {
+          id: structureId,
           name: rtStructure.name,
-          color: `rgb(${Math.round(rtStructure.color[0])}, ${Math.round(rtStructure.color[1])}, ${Math.round(rtStructure.color[2])})`,
-          visible: true
-        });
+          color,
+          visible: true,
+          contours: rtStructure.contours.map((contour, cIndex) => ({
+            id: `contour_${index}_${cIndex}_${Date.now()}`,
+            points: contour.points.map(p => ({ x: p[0], y: p[1] })),
+            sliceIndex: contour.sliceIndex,
+            structureId: structureId,
+            isClosed: true,
+            color
+          }))
+        };
       });
+
+      drawing.setStructures(newStructures);
     }
-  }, [rtStruct, drawing]);
+  }, [rtStruct, drawing.setStructures, drawing.structures.length]);
 
   // Canvas setup and DICOM rendering
   useEffect(() => {
@@ -175,7 +168,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     const imageAspect = currentImage.width / currentImage.height;
     let drawWidth = currentImage.width;
     let drawHeight = currentImage.height;
-    
+
     const maxSize = canvasSize * 0.95;
     if (imageAspect > 1) {
       drawWidth = maxSize;
@@ -184,10 +177,10 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       drawHeight = maxSize;
       drawWidth = drawHeight * imageAspect;
     }
-    
+
     drawWidth *= zoom;
     drawHeight *= zoom;
-    
+
     const imageX = (canvasSize - drawWidth) / 2 + pan.x;
     const imageY = (canvasSize - drawHeight) / 2 + pan.y;
 
@@ -248,72 +241,12 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     }
 
     // Coordinate transformation functions
-    const config = {
-      canvasSize,
-      zoom,
-      pan
-    };
-
-    const worldToCanvas = (worldX: number, worldY: number) => {
-      return worldToCanvasUtil(worldX, worldY, currentImage, config);
-    };
-
-    // Render RT structure contours
-    if (rtStruct?.structures) {
-      rtStruct.structures.forEach((rtStructure, structIndex) => {
-        const structure = rtStructures.find(s => s.id === `rt_${structIndex}`);
-        if (!structure?.visible) return;
-        
-        ctx.strokeStyle = structure.color;
-        ctx.lineWidth = 2;
-        ctx.setLineDash(structure.isEditing ? [5, 5] : []);
-        
-        const currentSliceZ = currentImage.sliceLocation;
-        
-        rtStructure.contours.forEach((contour) => {
-          if (contour.points.length === 0) return;
-          
-          const contourZ = contour.points[0][2];
-          let shouldShowContour = false;
-          
-          if (currentSliceZ !== undefined) {
-            const tolerance = (currentImage.sliceThickness || 1.0) / 2;
-            shouldShowContour = Math.abs(contourZ - currentSliceZ) <= tolerance;
-          } else {
-            shouldShowContour = contour.sliceIndex === currentSlice;
-          }
-          
-          if (shouldShowContour) {
-            ctx.beginPath();
-            let validPoints = 0;
-            
-            contour.points.forEach((point) => {
-              const canvasPoint = worldToCanvas(point[0], point[1]);
-              
-              if (canvasPoint.x >= imageX - 50 && canvasPoint.x <= imageX + drawWidth + 50 &&
-                  canvasPoint.y >= imageY - 50 && canvasPoint.y <= imageY + drawHeight + 50) {
-                if (validPoints === 0) {
-                  ctx.moveTo(canvasPoint.x, canvasPoint.y);
-                } else {
-                  ctx.lineTo(canvasPoint.x, canvasPoint.y);
-                }
-                validPoints++;
-              }
-            });
-            
-            if (validPoints > 2) {
-              ctx.closePath();
-              ctx.stroke();
-            }
-          }
-        });
-        
-        ctx.setLineDash([]);
-      });
-    }
 
 
-  }, [currentSlice, rtStructures, ctImages, windowLevel, windowWidth, zoom, pan, rtStruct, drawing, probabilityMap, probThreshold]);
+
+
+
+  }, [currentSlice, ctImages, windowLevel, windowWidth, zoom, pan, probabilityMap, probThreshold]);
 
   // Note: Canvas refs are automatically cleaned up by React on unmount
 
@@ -341,7 +274,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   };
 
   // Convert canvas coordinates to world coordinates for drawing
-  const canvasToWorld = (canvasX: number, canvasY: number): Point2D => {
+  const canvasToWorld = useCallback((canvasX: number, canvasY: number): Point2D => {
     const currentImage = ctImages[currentSlice];
     if (!currentImage) return { x: 0, y: 0 };
 
@@ -352,7 +285,21 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     };
 
     return canvasToWorldUtil(canvasX, canvasY, currentImage, config);
-  };
+  }, [ctImages, currentSlice, zoom, pan]);
+
+  // Convert world coordinates to canvas coordinates for rendering
+  const worldToCanvas = useCallback((worldX: number, worldY: number): Point2D => {
+    const currentImage = ctImages[currentSlice];
+    if (!currentImage) return { x: 0, y: 0 };
+
+    const config = {
+      canvasSize: 800,
+      zoom,
+      pan
+    };
+
+    return worldToCanvasUtil(worldX, worldY, currentImage, config);
+  }, [ctImages, currentSlice, zoom, pan]);
 
   // Handle wheel events for slice navigation and zoom
   const handleWheel = useCallback((e: WheelEvent) => {
@@ -385,25 +332,25 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   }, [handleWheel]);
 
   // Drawing event handlers
-  const handleStartDrawing = (point: Point2D) => {
+  const handleStartDrawing = useCallback((point: Point2D) => {
     const worldPoint = canvasToWorld(point.x, point.y);
-    
+
     // Handle region-grow and magic-wand tools
     if (drawing.currentTool === 'region-grow' || drawing.currentTool === 'magic-wand') {
       const currentImage = ctImages[currentSlice];
       if (!currentImage) return;
-      
+
       // Convert world point to pixel coordinates
       const config = {
         canvasSize: 800,
         zoom,
         pan,
       };
-      
+
       const bounds = getImageBounds(currentImage, config);
       const pixelX = Math.floor((worldPoint.x - bounds.x) / (bounds.width / currentImage.width));
       const pixelY = Math.floor((worldPoint.y - bounds.y) / (bounds.height / currentImage.height));
-      
+
       // Check if click is within image bounds
       if (pixelX < 0 || pixelX >= currentImage.width || pixelY < 0 || pixelY >= currentImage.height) {
         toast({
@@ -413,7 +360,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         });
         return;
       }
-      
+
       const imageData = {
         width: currentImage.width,
         height: currentImage.height,
@@ -421,10 +368,10 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         windowWidth: windowWidth[0],
         windowCenter: windowLevel[0],
       };
-      
+
       // Get tolerance from EditingPanel (default to 50 if not available)
       const tolerance = 50; // This should ideally come from EditingPanel state
-      
+
       const success = drawing.performRegionGrowing(
         imageData,
         pixelX,
@@ -434,7 +381,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         currentImage.rescaleSlope || 1,
         currentImage.rescaleIntercept || 0
       );
-      
+
       if (success) {
         toast({
           title: "Region growing complete",
@@ -449,31 +396,31 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       }
       return;
     }
-    
+
     // Normal drawing behavior
     drawing.startDrawing(worldPoint);
-  };
+  }, [canvasToWorld, ctImages, currentSlice, drawing, getImageBounds, pan, toast, windowLevel, windowWidth, zoom]);
 
-  const handleAddPoint = (point: Point2D) => {
+  const handleAddPoint = useCallback((point: Point2D) => {
     const worldPoint = canvasToWorld(point.x, point.y);
     drawing.addPoint(worldPoint);
-  };
+  }, [drawing, canvasToWorld]);
 
-  const handleFinishDrawing = () => {
+  const handleFinishDrawing = useCallback(() => {
     drawing.finishDrawing(currentSlice);
     toast({
       title: "Contour saved",
       description: "Drawing has been added to the active structure",
     });
-  };
+  }, [drawing, currentSlice, toast]);
 
-  const handleEraseAt = (point: Point2D) => {
+  const handleEraseAt = useCallback((point: Point2D) => {
     const worldPoint = canvasToWorld(point.x, point.y);
     drawing.eraseAt(worldPoint, currentSlice);
-  };
+  }, [drawing, canvasToWorld, currentSlice]);
 
   // Mouse event handlers for Pan and Windowing tools
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleCanvasMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     // Middle mouse button (button 1) for pan
     if (e.button === 1) {
       e.preventDefault();
@@ -490,90 +437,55 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       setIsDragging(true);
       setLastMousePos({ x: e.clientX, y: e.clientY });
     }
-  };
+  }, [viewerTool, setIsDragging, setLastMousePos, setPrevViewerTool, setViewerTool]);
 
-  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Update HU overlay position and value
-    const canvas = canvasRef.current;
-    if (canvas && showHUOverlay) {
-      const rect = canvas.getBoundingClientRect();
-      const canvasX = e.clientX - rect.left;
-      const canvasY = e.clientY - rect.top;
+  const handleCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      setMouseCanvasPos({ x, y });
 
-      setMouseCanvasPos({ x: canvasX, y: canvasY });
-
-      // Convert canvas coordinates to pixel coordinates in the image
-      const currentImage = ctImages[currentSlice];
-      if (currentImage) {
+      // Update HU info
+      if (ctImages[currentSlice] && showHUOverlay) {
+        const worldPos = canvasToWorld(x, y);
         const config = {
           canvasSize: 800,
           zoom,
-          pan,
+          pan
         };
+        const bounds = getImageBounds(ctImages[currentSlice], config);
+        const pixelX = Math.floor(((worldPos.x - bounds.x) / bounds.width) * ctImages[currentSlice].width);
+        const pixelY = Math.floor(((worldPos.y - bounds.y) / bounds.height) * ctImages[currentSlice].height);
 
-        const bounds = getImageBounds(currentImage, config);
-
-        // Check if mouse is within image bounds
-        if (
-          canvasX >= bounds.x &&
-          canvasX <= bounds.x + bounds.width &&
-          canvasY >= bounds.y &&
-          canvasY <= bounds.y + bounds.height
-        ) {
-          // Convert to pixel coordinates
-          const pixelX = ((canvasX - bounds.x) / bounds.width) * currentImage.width;
-          const pixelY = ((canvasY - bounds.y) / bounds.height) * currentImage.height;
-
-          // Get HU value
-          const huValue = DicomProcessor.getHUValueAtPixel(
-            currentImage,
-            pixelX,
-            pixelY
-          );
-
-          if (huValue !== null) {
-            setHUInfo({
-              pixelX: Math.floor(pixelX),
-              pixelY: Math.floor(pixelY),
-              huValue,
-            });
-          } else {
-            setHUInfo(null);
-          }
+        if (pixelX >= 0 && pixelX < ctImages[currentSlice].width &&
+          pixelY >= 0 && pixelY < ctImages[currentSlice].height) {
+          const huValue = DicomProcessor.getHUValueAtPixel(ctImages[currentSlice], pixelX, pixelY);
+          setHUInfo({ pixelX, pixelY, huValue });
         } else {
           setHUInfo(null);
         }
+      } else {
+        setHUInfo(null);
       }
     }
 
-    // Handle pan and windowing drag
     if (!isDragging) return;
 
     const deltaX = e.clientX - lastMousePos.x;
     const deltaY = e.clientY - lastMousePos.y;
 
     if (viewerTool === "pan") {
-      setPan((prev) => ({
-        x: prev.x + deltaX,
-        y: prev.y + deltaY,
-      }));
+      setPan(prev => ({ x: prev.x + deltaX, y: prev.y + deltaY }));
     } else if (viewerTool === "windowing") {
-      // Horizontal movement adjusts window width
-      // Vertical movement adjusts window level
-      setWindowWidth((prev) => {
-        const newWidth = Math.max(1, prev[0] + deltaX * 2);
-        return [newWidth];
-      });
-      setWindowLevel((prev) => {
-        const newLevel = prev[0] - deltaY * 2; // Inverted for intuitive up/down
-        return [newLevel];
-      });
+      setWindowWidth(prev => [Math.max(1, prev[0] + deltaX * 2)]);
+      setWindowLevel(prev => [prev[0] - deltaY * 2]); // Inverted for intuitive up/down
     }
 
     setLastMousePos({ x: e.clientX, y: e.clientY });
-  };
+  }, [isDragging, lastMousePos, viewerTool, ctImages, currentSlice, zoom, pan, canvasToWorld, canvasRef, showHUOverlay, setMouseCanvasPos, getImageBounds, DicomProcessor, setHUInfo, setPan, setWindowWidth, setWindowLevel]);
 
-  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleCanvasMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     // If middle button was used for pan, restore previous tool
     if (e.button === 1 && isDragging) {
       if (prevViewerTool) {
@@ -582,74 +494,77 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
       }
     }
     setIsDragging(false);
-  };
+  }, [isDragging, prevViewerTool, setViewerTool, setPrevViewerTool, setIsDragging]);
 
-  const handleCanvasMouseLeave = () => {
+  const handleCanvasMouseLeave = useCallback(() => {
     setIsDragging(false);
     setMouseCanvasPos(null);
     setHUInfo(null);
-  };
+  }, [setIsDragging, setMouseCanvasPos, setHUInfo]);
 
   // Tool change handlers
-  const handleViewerToolChange = (tool: ViewerTool) => {
+  const handleViewerToolChange = useCallback((tool: ViewerTool) => {
     setViewerTool(tool);
     if (tool !== "select") {
       drawing.setTool("select");
     }
-  };
+  }, [drawing, setViewerTool]);
 
-  const handleDrawingToolChange = (tool: DrawingTool) => {
-    drawing.setTool(tool);
-    setViewerTool("select");
-    
-    // Auto-create a structure if none is active and we're starting to draw
-    if (!drawing.activeStructureId && (tool === "brush" || tool === "polygon")) {
-      addNewStructure();
-    }
-  };
-
-  const toggleRTStructureVisibility = (id: string) => {
-    setRTStructures(prev => 
-      prev.map(s => s.id === id ? { ...s, visible: !s.visible } : s)
-    );
-    drawing.toggleStructureVisibility(id);
-  };
-
-  const startEditingRTStructure = (id: string) => {
-    setRTStructures(prev => 
-      prev.map(s => ({ ...s, isEditing: s.id === id ? !s.isEditing : false }))
-    );
-    drawing.setActiveStructure(id);
-    if (drawing.currentTool === "select") {
-      drawing.setTool("brush");
-    }
-  };
-
-  const addNewStructure = () => {
+  const addNewStructure = useCallback(() => {
     const newId = `edit_${Date.now()}`;
     const colors = ["#ff8844", "#8844ff", "#44ff88", "#ff4488", "#88ff44"];
     const color = colors[drawing.structures.filter(s => s.id.startsWith('edit_')).length % colors.length];
-    
+
     const newStructure = {
       id: newId,
       name: `New_Structure_${drawing.structures.length + 1}`,
       color,
       visible: true
     };
-    
+
     drawing.addStructure(newStructure);
     drawing.setActiveStructure(newId);
     drawing.setTool("brush");
-    
-    setRTStructures(prev => [...prev, { ...newStructure, isEditing: true }]);
-    
+
     toast({
       title: "New structure created",
       description: `${newStructure.name} ready for drawing`,
     });
-  };
+  }, [drawing, toast]);
 
-  const handleDownload = () => {
+  const handleDrawingToolChange = useCallback((tool: DrawingTool) => {
+    drawing.setTool(tool);
+    setViewerTool("select");
+
+    // Auto-create a structure if none is active and we're starting to draw
+    if (!drawing.activeStructureId) {
+      if (tool === "brush" || tool === "polygon") {
+        addNewStructure();
+      } else if (tool === "eraser") {
+        toast({
+          title: "No active structure",
+          description: "Please select or create a structure to erase",
+          variant: "destructive",
+        });
+        setViewerTool("select");
+        drawing.setTool("select");
+        return;
+      }
+    }
+  }, [drawing, toast, setViewerTool, addNewStructure]);
+
+  const toggleRTStructureVisibility = useCallback((id: string) => {
+    drawing.toggleStructureVisibility(id);
+  }, [drawing]);
+
+  const startEditingRTStructure = useCallback((id: string) => {
+    drawing.setActiveStructure(id);
+    if (drawing.currentTool === "select") {
+      drawing.setTool("brush");
+    }
+  }, [drawing]);
+
+  const handleDownload = useCallback(() => {
     try {
       if (drawing.structures.length === 0) {
         toast({
@@ -680,7 +595,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         variant: "destructive"
       });
     }
-  };
+  }, [drawing, ctImages, rtStruct, toast]);
 
   const resetView = () => {
     setZoom(1);
@@ -693,7 +608,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
     });
   };
 
-  const interpolateSlices = () => {
+  const interpolateSlices = useCallback(() => {
     if (drawing.activeStructureId) {
       const activeStructureId = drawing.activeStructureId;
       const activeStructure = drawing.structures.find(s => s.id === activeStructureId);
@@ -706,25 +621,39 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
 
           // Interpolate between consecutive pairs of slices with contours
           for (let i = 0; i < slicesWithContours.length - 1; i++) {
-            const slice1 = slicesWithContours[i];
-            const slice2 = slicesWithContours[i + 1];
+            const startSlice = slicesWithContours[i];
+            const endSlice = slicesWithContours[i + 1];
 
-            // Find the contours for these slices
-            const contour1 = activeStructure.contours.find(c => c.sliceIndex === slice1);
-            const contour2 = activeStructure.contours.find(c => c.sliceIndex === slice2);
+            // Skip if slices are adjacent (nothing to interpolate)
+            if (endSlice - startSlice <= 1) continue;
 
-            if (contour1 && contour2) {
-              // Interpolate for all slices between slice1 and slice2
-              for (let targetSlice = slice1 + 1; targetSlice < slice2; targetSlice++) {
-                const interpolatedContour = interpolateContours(contour1, contour2, targetSlice);
+            const startContours = activeStructure.contours.filter(c => c.sliceIndex === startSlice);
+            const endContours = activeStructure.contours.filter(c => c.sliceIndex === endSlice);
 
-                if (interpolatedContour) {
-                  // Add the interpolated contour to the drawing
-                  drawing.addContourToStructure(
-                    activeStructureId,
-                    interpolatedContour
-                  );
-                  interpolatedCount++;
+            // Only interpolate if we have matching contours (simplified logic)
+            if (startContours.length > 0 && endContours.length > 0) {
+              // Assuming interpolateContours is a helper that takes multiple contours and returns new ones
+              // This part of the instruction's change is a bit ambiguous, I'll keep the original call structure
+              // but adapt to the new loop logic. If `interpolateContours` is meant to be a single call per pair,
+              // the original `interpolateContours(contour1, contour2, targetSlice)` would be more appropriate.
+              // Given the instruction's new loop, it implies `interpolateContours` might handle a range or return multiple.
+              // For now, I'll assume `interpolateContours` is a function that can generate contours for intermediate slices.
+              // If `interpolateContours` is meant to be called for each intermediate slice, the original loop structure was better.
+              // Let's revert to the original loop structure but with the new `startSlice`/`endSlice` variables for clarity.
+              for (let targetSlice = startSlice + 1; targetSlice < endSlice; targetSlice++) {
+                const contour1 = activeStructure.contours.find(c => c.sliceIndex === startSlice);
+                const contour2 = activeStructure.contours.find(c => c.sliceIndex === endSlice);
+
+                if (contour1 && contour2) {
+                  const interpolatedContour = interpolateContours(contour1, contour2, targetSlice);
+
+                  if (interpolatedContour) {
+                    drawing.addContourToStructure(
+                      activeStructureId,
+                      interpolatedContour
+                    );
+                    interpolatedCount++;
+                  }
                 }
               }
             }
@@ -756,10 +685,10 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         variant: "destructive"
       });
     }
-  };
+  }, [drawing, toast]);
 
   // Window/Level preset handlers
-  const applyWindowPreset = (presetName: string) => {
+  const applyWindowPreset = useCallback((presetName: string) => {
     const preset = WINDOW_PRESETS.find(p => p.name === presetName);
     if (preset) {
       setWindowLevel([preset.windowLevel]);
@@ -769,7 +698,7 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         description: preset.description,
       });
     }
-  };
+  }, [toast, setWindowLevel, setWindowWidth]);
 
   // Editing handlers
   const handleSelectContour = useCallback((canvasPoint: Point2D, selectPoint: boolean) => {
@@ -1303,105 +1232,21 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
   return (
     <div className="h-screen bg-background flex flex-col animate-fade-in overflow-hidden">
       {/* Compact Header */}
-      <div className="bg-card border-b border-border px-4 py-2 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            {onBack && (
-              <Button variant="ghost" size="sm" onClick={onBack} title="Back to file selection">
-                <ArrowLeft className="w-4 h-4 mr-1" />
-                Back
-              </Button>
-            )}
-            <div>
-              <h2 className="text-lg font-semibold text-foreground">DicomEdit</h2>
-              <p className="text-muted-foreground text-xs">
-                {ctImages.length} slices {rtStruct ? "• RT Structure loaded" : ""}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant={mprMode ? "default" : "outline"}
-              size="sm"
-              onClick={() => {
-                setMprMode(!mprMode);
-                toast({
-                  title: mprMode ? "Single View" : "MPR View",
-                  description: mprMode
-                    ? "Switched to standard single-plane view"
-                    : "Switched to multi-planar reconstruction view",
-                });
-              }}
-              title="Toggle MPR 3D view (M)"
-            >
-              <Grid3x3 className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowShortcutsHelp(true)}
-              title="Keyboard shortcuts (?)"
-            >
-              <Keyboard className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                drawing.undo();
-                toast({
-                  title: 'Undo',
-                  description: 'Last action has been undone',
-                });
-              }}
-              disabled={!drawing.canUndo}
-              title="Undo (Ctrl+Z)"
-            >
-              <Undo className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                drawing.redo();
-                toast({
-                  title: 'Redo',
-                  description: 'Last action has been redone',
-                });
-              }}
-              disabled={!drawing.canRedo}
-              title="Redo (Ctrl+Y)"
-            >
-              <Redo className="w-4 h-4" />
-            </Button>
-            <Button variant="outline" size="sm" onClick={resetView} title="Reset view (R)">
-              <RotateCcw className="w-4 h-4" />
-            </Button>
-            <Separator orientation="vertical" className="h-6" />
-            <Button
-              variant={cineMode ? "default" : "outline"}
-              size="sm"
-              onClick={toggleCineMode}
-              title="Cine/Auto-play mode (C)"
-            >
-              {cineMode ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-            </Button>
-            <Button
-              variant={isFullscreen ? "default" : "outline"}
-              size="sm"
-              onClick={toggleFullscreen}
-              title="Fullscreen mode (F)"
-            >
-              <Maximize2 className="w-4 h-4" />
-            </Button>
-            <Separator orientation="vertical" className="h-6" />
-            <Button variant="medical" size="sm" onClick={handleDownload} title="Export structures (Ctrl+S)">
-              <Download className="w-4 h-4 mr-1" />
-              Export
-            </Button>
-          </div>
-        </div>
-      </div>
+      <ViewerToolbar
+        ctImages={ctImages}
+        rtStruct={rtStruct}
+        onBack={onBack}
+        mprMode={mprMode}
+        setMprMode={setMprMode}
+        setShowShortcutsHelp={setShowShortcutsHelp}
+        drawing={drawing}
+        resetView={resetView}
+        cineMode={cineMode}
+        toggleCineMode={toggleCineMode}
+        isFullscreen={isFullscreen}
+        toggleFullscreen={toggleFullscreen}
+        handleDownload={handleDownload}
+      />
 
       {/* Main Content Area */}
       {mprMode ? (
@@ -1417,593 +1262,312 @@ export const DicomViewer = ({ ctImages, rtStruct, probabilityMap, onBack }: Dico
         />
       ) : (
         // Standard Single-Plane View
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Tool Sidebar */}
-        {!leftSidebarCollapsed && (
-          <div className="w-16 bg-card border-r border-border flex flex-col p-2 gap-2 relative">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setLeftSidebarCollapsed(true)}
-              className="absolute -right-3 top-2 h-6 w-6 p-0 rounded-full bg-card border border-border z-10"
-              title="Collapse toolbar"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-
-            <div className="text-xs text-muted-foreground text-center mb-2 font-medium">Tools</div>
-
-            {/* Viewer Tools */}
-            <Button
-              variant={viewerTool === "select" ? "default" : "ghost"}
-              size="sm"
-              onClick={() => handleViewerToolChange("select")}
-              className="w-full h-12 flex flex-col items-center gap-1 p-1"
-              title="Select tool (S) - Default navigation"
-            >
-              <MousePointer className="w-5 h-5" />
-              <span className="text-xs">Select</span>
-            </Button>
-            <Button
-              variant={viewerTool === "pan" ? "default" : "ghost"}
-              size="sm"
-              onClick={() => handleViewerToolChange("pan")}
-              className="w-full h-12 flex flex-col items-center gap-1 p-1"
-              title="Pan tool (P) - Drag to move image"
-            >
-              <Move className="w-5 h-5" />
-              <span className="text-xs">Pan</span>
-            </Button>
-            <Button
-              variant={viewerTool === "windowing" ? "default" : "ghost"}
-              size="sm"
-              onClick={() => handleViewerToolChange("windowing")}
-              className="w-full h-12 flex flex-col items-center gap-1 p-1"
-              title="Window/Level tool (W) - Drag to adjust brightness/contrast"
-            >
-              <Settings className="w-5 h-5" />
-              <span className="text-xs">W/L</span>
-            </Button>
-
-            <Separator className="my-2" />
-
-            {/* Drawing Tools */}
-            <Button
-              variant={drawing.currentTool === "brush" ? "medical" : "ghost"}
-              size="sm"
-              onClick={() => handleDrawingToolChange("brush")}
-              className="w-full h-12 flex flex-col items-center gap-1 p-1"
-              title="Brush tool (B) - Draw contours"
-            >
-              <Paintbrush className="w-5 h-5" />
-              <span className="text-xs">Brush</span>
-            </Button>
-            <Button
-              variant={drawing.currentTool === "polygon" ? "medical" : "ghost"}
-              size="sm"
-              onClick={() => handleDrawingToolChange("polygon")}
-              className="w-full h-12 flex flex-col items-center gap-1 p-1"
-              title="Polygon tool - Click to add points"
-            >
-              <Scissors className="w-5 h-5" />
-              <span className="text-xs">Polygon</span>
-            </Button>
-            <Button
-              variant={drawing.currentTool === "eraser" ? "destructive" : "ghost"}
-              size="sm"
-              onClick={() => handleDrawingToolChange("eraser")}
-              className="w-full h-12 flex flex-col items-center gap-1 p-1"
-              title="Eraser tool (E) - Remove contours"
-            >
-              <Eraser className="w-5 h-5" />
-              <span className="text-xs">Erase</span>
-            </Button>
-          </div>
-        )}
-
-        {/* Collapsed Left Sidebar - Show Button */}
-        {leftSidebarCollapsed && (
-          <div className="relative">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setLeftSidebarCollapsed(false)}
-              className="absolute left-0 top-2 h-8 w-6 p-0 rounded-r-md bg-card border border-border border-l-0 z-10"
-              title="Expand toolbar"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </Button>
-          </div>
-        )}
-
-        {/* Main Viewer Canvas */}
-        <div className="flex-1 bg-black flex flex-col min-h-0">
-          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
-            <div className="relative w-full h-full flex items-center justify-center">
-              <canvas
-                ref={canvasRef}
-                className="shadow-elevation block max-w-full max-h-full"
-                style={{
-                  imageRendering: "pixelated",
-                  width: "auto",
-                  height: "auto",
-                  maxWidth: "100%",
-                  maxHeight: "100%",
-                  aspectRatio: "1 / 1",
-                  border: "2px solid #333",
-                  cursor:
-                    isDragging && viewerTool === "pan" ? "grabbing" :
-                    viewerTool === "pan" ? "grab" :
-                    viewerTool === "windowing" ? "crosshair" :
-                    drawing.currentTool === "brush" ? "crosshair" :
-                    drawing.currentTool === "eraser" ? "cell" :
-                    drawing.currentTool === "polygon" ? "crosshair" :
-                    "default"
-                }}
-                onMouseDown={handleCanvasMouseDown}
-                onMouseMove={handleCanvasMouseMove}
-                onMouseUp={handleCanvasMouseUp}
-                onMouseLeave={handleCanvasMouseLeave}
-                onContextMenu={(e) => e.preventDefault()}
-              />
-
-              <DrawingCanvas
-                width={800}
-                height={800}
-                className="max-w-full max-h-full"
-                canvasStyle={{
-                  width: "auto",
-                  height: "auto",
-                  maxWidth: "100%",
-                  maxHeight: "100%",
-                  aspectRatio: "1 / 1",
-                }}
-                contours={drawing.getContoursForSlice(currentSlice).map(contour => ({
-                  ...contour,
-                  points: contour.points.map(worldPoint => {
-                    const currentImage = ctImages[currentSlice];
-                    if (!currentImage) return { x: 0, y: 0 };
-
-                    const canvasSize = 800;
-                    const imageAspect = currentImage.width / currentImage.height;
-
-                    let drawWidth = currentImage.width;
-                    let drawHeight = currentImage.height;
-
-                    const maxSize = canvasSize * 0.95;
-                    if (imageAspect > 1) {
-                      drawWidth = maxSize;
-                      drawHeight = drawWidth / imageAspect;
-                    } else {
-                      drawHeight = maxSize;
-                      drawWidth = drawHeight * imageAspect;
-                    }
-
-                    drawWidth *= zoom;
-                    drawHeight *= zoom;
-
-                    const imageX = (canvasSize - drawWidth) / 2 + pan.x;
-                    const imageY = (canvasSize - drawHeight) / 2 + pan.y;
-
-                    const imagePosition = currentImage.imagePosition || [0, 0, 0];
-                    const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-
-                    const pixelX = (worldPoint.x - imagePosition[0]) / pixelSpacing[0];
-                    const pixelY = (worldPoint.y - imagePosition[1]) / pixelSpacing[1];
-
-                    const scaleX = drawWidth / currentImage.width;
-                    const scaleY = drawHeight / currentImage.height;
-
-                    return {
-                      x: imageX + (pixelX * scaleX),
-                      y: imageY + (pixelY * scaleY)
-                    };
-                  })
-                }))}
-                currentPath={drawing.currentPath.map(worldPoint => {
-                  const currentImage = ctImages[currentSlice];
-                  if (!currentImage) return { x: 0, y: 0 };
-
-                  const canvasSize = 800;
-                  const imageAspect = currentImage.width / currentImage.height;
-
-                  let drawWidth = currentImage.width;
-                  let drawHeight = currentImage.height;
-
-                  const maxSize = canvasSize * 0.95;
-                  if (imageAspect > 1) {
-                    drawWidth = maxSize;
-                    drawHeight = drawWidth / imageAspect;
-                  } else {
-                    drawHeight = maxSize;
-                    drawWidth = drawHeight * imageAspect;
-                  }
-
-                  drawWidth *= zoom;
-                  drawHeight *= zoom;
-
-                  const imageX = (canvasSize - drawWidth) / 2 + pan.x;
-                  const imageY = (canvasSize - drawHeight) / 2 + pan.y;
-
-                  const imagePosition = currentImage.imagePosition || [0, 0, 0];
-                  const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-
-                  const pixelX = (worldPoint.x - imagePosition[0]) / pixelSpacing[0];
-                  const pixelY = (worldPoint.y - imagePosition[1]) / pixelSpacing[1];
-
-                  const scaleX = drawWidth / currentImage.width;
-                  const scaleY = drawHeight / currentImage.height;
-
-                  return {
-                    x: imageX + (pixelX * scaleX),
-                    y: imageY + (pixelY * scaleY)
-                  };
-                })}
-                currentTool={drawing.currentTool}
-                isDrawing={drawing.isDrawing}
-                brushSize={drawing.brushSize}
-                eraserSize={drawing.eraserSize}
-                onStartDrawing={handleStartDrawing}
-                onAddPoint={handleAddPoint}
-                onFinishDrawing={handleFinishDrawing}
-                onEraseAt={handleEraseAt}
-                onWheel={(e) => {
-                  if (e.ctrlKey || e.metaKey) {
-                    e.preventDefault();
-                    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-                    setZoom(prev => Math.max(0.5, Math.min(5, prev * delta)));
-                  } else {
-                    e.preventDefault();
-                    const newSlice = currentSlice + (e.deltaY > 0 ? 1 : -1);
-                    if (newSlice >= 0 && newSlice < ctImages.length) {
-                      setCurrentSlice(newSlice);
-                    }
-                  }
-                }}
-                selectedContour={drawing.selectedContour}
-                onSelectContour={handleSelectContour}
-                onMovePoint={handleMovePoint}
-                onInsertPoint={handleInsertPoint}
-                onDeletePoint={handleDeletePoint}
-              />
-
-              {/* HU Value Overlay */}
-              {mouseCanvasPos && huInfo && (
-                <HUOverlay
-                  visible={showHUOverlay}
-                  x={mouseCanvasPos.x}
-                  y={mouseCanvasPos.y}
-                  pixelX={huInfo.pixelX}
-                  pixelY={huInfo.pixelY}
-                  huValue={huInfo.huValue}
-                  sliceNumber={currentSlice}
-                  totalSlices={ctImages.length}
-                  showCrosshair={showCrosshair}
-                />
-              )}
-
-              <div className="absolute top-2 left-2 bg-black/80 text-white px-3 py-1.5 rounded text-xs">
-                {viewerTool === "select" && drawing.currentTool === "select" && "🖱️ Scroll: Slices • Ctrl+Scroll: Zoom • Middle: Pan"}
-                {viewerTool === "pan" && "🖱️ Drag: Pan • Scroll: Slices • Ctrl+Scroll: Zoom"}
-                {viewerTool === "windowing" && "🖱️ Drag: Brightness/Contrast • Scroll: Slices"}
-                {drawing.currentTool === "brush" && "🖱️ Draw • Scroll: Slices • Ctrl+Scroll: Zoom"}
-                {drawing.currentTool === "eraser" && "🖱️ Erase • Scroll: Slices • Ctrl+Scroll: Zoom"}
-                {drawing.currentTool === "polygon" && "🖱️ Click: Points • Double-click: Finish • Scroll: Slices"}
-              </div>
-            </div>
-          </div>
-
-          {/* Bottom Slice Navigation Bar - PROMINENT */}
-          <div className="bg-card border-t-2 border-primary/50 p-4">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentSlice(0)}
-                  disabled={currentSlice === 0}
-                  title="First slice"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <ArrowLeft className="w-4 h-4 -ml-3" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentSlice(prev => Math.max(0, prev - 1))}
-                  disabled={currentSlice === 0}
-                  title="Previous slice ([)"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </Button>
-              </div>
-
-              <div className="flex-1 flex items-center gap-4">
-                <Slider
-                  value={[currentSlice]}
-                  onValueChange={([value]) => setCurrentSlice(value)}
-                  max={ctImages.length - 1}
-                  step={1}
-                  className="flex-1"
-                />
-                <div className="text-sm font-medium text-foreground min-w-[80px] text-center bg-muted px-3 py-1 rounded">
-                  {currentSlice + 1} / {ctImages.length}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentSlice(prev => Math.min(ctImages.length - 1, prev + 1))}
-                  disabled={currentSlice === ctImages.length - 1}
-                  title="Next slice (])"
-                >
-                  <ArrowLeft className="w-4 h-4 rotate-180" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentSlice(ctImages.length - 1)}
-                  disabled={currentSlice === ctImages.length - 1}
-                  title="Last slice"
-                >
-                  <ArrowLeft className="w-4 h-4 rotate-180" />
-                  <ArrowLeft className="w-4 h-4 rotate-180 -ml-3" />
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Sidebar - Controls & Structures */}
-        {!rightSidebarCollapsed && (
-          <div className="w-72 bg-card border-l border-border flex flex-col overflow-hidden relative">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setRightSidebarCollapsed(true)}
-              className="absolute -left-3 top-2 h-6 w-6 p-0 rounded-full bg-card border border-border z-10"
-              title="Collapse panel"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </Button>
-
-            {/* Image Controls */}
-            <div className="p-4 border-b border-border space-y-3">
-              <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
-                <Settings className="w-4 h-4 text-primary" />
-                Image Controls
-              </h3>
-            <div className="space-y-3">
-              {/* W/L Presets */}
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Window/Level Presets</label>
-                <Select onValueChange={applyWindowPreset}>
-                  <SelectTrigger className="w-full h-8 text-xs">
-                    <SelectValue placeholder="Select preset..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {WINDOW_PRESETS.map((preset) => (
-                      <SelectItem key={preset.name} value={preset.name} className="text-xs">
-                        {preset.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs text-muted-foreground">Window Level</label>
-                  <span className="text-xs text-muted-foreground font-mono">{windowLevel[0]}</span>
-                </div>
-                <Slider
-                  value={windowLevel}
-                  onValueChange={setWindowLevel}
-                  min={-1000}
-                  max={3000}
-                  step={10}
-                />
-              </div>
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs text-muted-foreground">Window Width</label>
-                  <span className="text-xs text-muted-foreground font-mono">{windowWidth[0]}</span>
-                </div>
-                <Slider
-                  value={windowWidth}
-                  onValueChange={setWindowWidth}
-                  min={1}
-                  max={4000}
-                  step={10}
-                />
-              </div>
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs text-muted-foreground">Zoom</label>
-                  <span className="text-xs text-muted-foreground font-mono">{(zoom * 100).toFixed(0)}%</span>
-                </div>
-                <Slider
-                  value={[zoom]}
-                  onValueChange={([value]) => setZoom(value)}
-                  min={0.1}
-                  max={5}
-                  step={0.1}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Drawing Settings */}
-          <div className="p-4 border-b border-border space-y-3">
-            <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
-              <Paintbrush className="w-4 h-4 text-primary" />
-              Drawing Settings
-            </h3>
-            <div className="space-y-3">
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs text-muted-foreground">Brush Size</label>
-                  <span className="text-xs text-muted-foreground font-mono">{drawing.brushSize}px</span>
-                </div>
-                <Slider
-                  value={[drawing.brushSize]}
-                  onValueChange={([value]) => drawing.setBrushSize(value)}
-                  min={1}
-                  max={20}
-                  step={1}
-                />
-              </div>
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs text-muted-foreground">Eraser Size</label>
-                  <span className="text-xs text-muted-foreground font-mono">{drawing.eraserSize}px</span>
-                </div>
-                <Slider
-                  value={[drawing.eraserSize]}
-                  onValueChange={([value]) => drawing.setEraserSize(value)}
-                  min={5}
-                  max={50}
-                  step={5}
-                />
-              </div>
+        <div className="flex-1 flex overflow-hidden">
+          {/* Left Tool Sidebar */}
+          {!leftSidebarCollapsed && (
+            <div className="w-16 bg-card border-r border-border flex flex-col p-2 gap-2 relative">
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                onClick={() => drawing.clearSlice(currentSlice)}
-                className="w-full"
+                onClick={() => setLeftSidebarCollapsed(true)}
+                className="absolute -right-3 top-2 h-6 w-6 p-0 rounded-full bg-card border border-border z-10"
+                title="Collapse toolbar"
               >
-                Clear Current Slice
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+
+              <div className="text-xs text-muted-foreground text-center mb-2 font-medium">Tools</div>
+
+              {/* Viewer Tools */}
+              <Button
+                variant={viewerTool === "select" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => handleViewerToolChange("select")}
+                className="w-full h-12 flex flex-col items-center gap-1 p-1"
+                title="Select tool (S) - Default navigation"
+              >
+                <MousePointer className="w-5 h-5" />
+                <span className="text-xs">Select</span>
+              </Button>
+              <Button
+                variant={viewerTool === "pan" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => handleViewerToolChange("pan")}
+                className="w-full h-12 flex flex-col items-center gap-1 p-1"
+                title="Pan tool (P) - Drag to move image"
+              >
+                <Move className="w-5 h-5" />
+                <span className="text-xs">Pan</span>
+              </Button>
+              <Button
+                variant={viewerTool === "windowing" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => handleViewerToolChange("windowing")}
+                className="w-full h-12 flex flex-col items-center gap-1 p-1"
+                title="Window/Level tool (W) - Drag to adjust brightness/contrast"
+              >
+                <Settings className="w-5 h-5" />
+                <span className="text-xs">W/L</span>
+              </Button>
+
+              <Separator className="my-2" />
+
+              {/* Drawing Tools */}
+              <Button
+                variant={drawing.currentTool === "brush" ? "medical" : "ghost"}
+                size="sm"
+                onClick={() => handleDrawingToolChange("brush")}
+                className="w-full h-12 flex flex-col items-center gap-1 p-1"
+                title="Brush tool (B) - Draw contours"
+              >
+                <Paintbrush className="w-5 h-5" />
+                <span className="text-xs">Brush</span>
+              </Button>
+              <Button
+                variant={drawing.currentTool === "polygon" ? "medical" : "ghost"}
+                size="sm"
+                onClick={() => handleDrawingToolChange("polygon")}
+                className="w-full h-12 flex flex-col items-center gap-1 p-1"
+                title="Polygon tool - Click to add points"
+              >
+                <Scissors className="w-5 h-5" />
+                <span className="text-xs">Polygon</span>
+              </Button>
+              <Button
+                variant={drawing.currentTool === "eraser" ? "destructive" : "ghost"}
+                size="sm"
+                onClick={() => handleDrawingToolChange("eraser")}
+                className="w-full h-12 flex flex-col items-center gap-1 p-1"
+                title="Eraser tool (E) - Remove contours"
+              >
+                <Eraser className="w-5 h-5" />
+                <span className="text-xs">Erase</span>
               </Button>
             </div>
-          </div>
+          )}
 
-          {/* Structures List */}
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="p-4 border-b border-border">
-              <div className="flex items-center justify-between">
+          {/* Collapsed Left Sidebar - Show Button */}
+          {leftSidebarCollapsed && (
+            <div className="relative">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setLeftSidebarCollapsed(false)}
+                className="absolute left-0 top-2 h-8 w-6 p-0 rounded-r-md bg-card border border-border border-l-0 z-10"
+                title="Expand toolbar"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          )}
+
+          {/* Main Viewer Canvas */}
+          <ViewerCanvas
+            canvasRef={canvasRef}
+            viewerTool={viewerTool}
+            drawing={drawing}
+            isDragging={isDragging}
+            onMouseDown={handleCanvasMouseDown}
+            onMouseMove={handleCanvasMouseMove}
+            onMouseUp={handleCanvasMouseUp}
+            onMouseLeave={handleCanvasMouseLeave}
+            currentSlice={currentSlice}
+            ctImages={ctImages}
+            setZoom={setZoom}
+            setCurrentSlice={setCurrentSlice}
+            onStartDrawing={handleStartDrawing}
+            onAddPoint={handleAddPoint}
+            onFinishDrawing={handleFinishDrawing}
+            onEraseAt={handleEraseAt}
+            onSelectContour={handleSelectContour}
+            onMovePoint={handleMovePoint}
+            onInsertPoint={handleInsertPoint}
+            onDeletePoint={handleDeletePoint}
+            mouseCanvasPos={mouseCanvasPos}
+            huInfo={huInfo}
+            showHUOverlay={showHUOverlay}
+            showCrosshair={showCrosshair}
+            worldToCanvas={worldToCanvas}
+          />
+
+
+          {/* Right Sidebar - Controls & Structures */}
+          {!rightSidebarCollapsed && (
+            <div className="w-72 bg-card border-l border-border flex flex-col overflow-hidden relative">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setRightSidebarCollapsed(true)}
+                className="absolute -left-3 top-2 h-6 w-6 p-0 rounded-full bg-card border border-border z-10"
+                title="Collapse panel"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+
+              {/* Image Controls */}
+              <div className="p-4 border-b border-border space-y-3">
                 <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-primary" />
-                  Structures ({drawing.structures.length})
+                  <Settings className="w-4 h-4 text-primary" />
+                  Image Controls
                 </h3>
-                <Button variant="medical" size="sm" onClick={addNewStructure} title="Create new structure">
-                  <Plus className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
+                <div className="space-y-3">
+                  {/* W/L Presets */}
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Window/Level Presets</label>
+                    <Select onValueChange={applyWindowPreset}>
+                      <SelectTrigger className="w-full h-8 text-xs">
+                        <SelectValue placeholder="Select preset..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {WINDOW_PRESETS.map((preset) => (
+                          <SelectItem key={preset.name} value={preset.name} className="text-xs">
+                            {preset.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-            <div className="flex-1 p-3 space-y-2 overflow-y-auto">
-              {[...rtStructures, ...drawing.structures.filter(s => !s.id.startsWith('rt_'))].map((structure) => {
-                const isActive = drawing.activeStructureId === structure.id;
-                return (
-                  <Card
-                    key={structure.id}
-                    className={`p-2 cursor-pointer transition-all ${
-                      isActive ? "border-primary shadow-glow bg-primary/5" : "hover:bg-muted/50"
-                    }`}
-                    onClick={() => startEditingRTStructure(structure.id)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <div
-                          className="w-3 h-3 rounded border flex-shrink-0"
-                          style={{ backgroundColor: structure.color }}
-                        />
-                        <span className="text-xs font-medium text-foreground truncate">
-                          {structure.name}
-                        </span>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleRTStructureVisibility(structure.id);
-                        }}
-                        className="flex-shrink-0 h-6 w-6 p-0"
-                      >
-                        {structure.visible ? (
-                          <Eye className="w-3 h-3" />
-                        ) : (
-                          <EyeOff className="w-3 h-3 text-muted-foreground" />
-                        )}
-                      </Button>
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs text-muted-foreground">Window Level</label>
+                      <span className="text-xs text-muted-foreground font-mono">{windowLevel[0]}</span>
                     </div>
-                  </Card>
-                );
-              })}
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={interpolateSlices}
-                className="w-full mt-4"
-                title="Interpolate contours between slices (I)"
-              >
-                <Copy className="w-3 h-3 mr-2" />
-                Interpolate
-              </Button>
-            </div>
-
-            <div className="p-3 border-t border-border bg-muted/30">
-              <div className="text-xs text-muted-foreground space-y-0.5">
-                <div className="flex justify-between">
-                  <span>Visible:</span>
-                  <span className="font-mono">{drawing.structures.filter(s => s.visible).length}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Contours here:</span>
-                  <span className="font-mono">{drawing.getContoursForSlice(currentSlice).length}</span>
+                    <Slider
+                      value={windowLevel}
+                      onValueChange={setWindowLevel}
+                      min={-1000}
+                      max={3000}
+                      step={10}
+                    />
+                  </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs text-muted-foreground">Window Width</label>
+                      <span className="text-xs text-muted-foreground font-mono">{windowWidth[0]}</span>
+                    </div>
+                    <Slider
+                      value={windowWidth}
+                      onValueChange={setWindowWidth}
+                      min={1}
+                      max={4000}
+                      step={10}
+                    />
+                  </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs text-muted-foreground">Zoom</label>
+                      <span className="text-xs text-muted-foreground font-mono">{(zoom * 100).toFixed(0)}%</span>
+                    </div>
+                    <Slider
+                      value={[zoom]}
+                      onValueChange={([value]) => setZoom(value)}
+                      min={0.1}
+                      max={5}
+                      step={0.1}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
 
-          {/* Advanced Editing Panel */}
-          {drawing.selectedContour && (
-            <div className="border-t border-border overflow-y-auto">
-              <EditingPanel
-                selectedContour={drawing.selectedContour}
+              {/* Drawing Settings */}
+              <div className="p-4 border-b border-border space-y-3">
+                <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
+                  <Paintbrush className="w-4 h-4 text-primary" />
+                  Drawing Settings
+                </h3>
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs text-muted-foreground">Brush Size</label>
+                      <span className="text-xs text-muted-foreground font-mono">{drawing.brushSize}px</span>
+                    </div>
+                    <Slider
+                      value={[drawing.brushSize]}
+                      onValueChange={([value]) => drawing.setBrushSize(value)}
+                      min={1}
+                      max={20}
+                      step={1}
+                    />
+                  </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs text-muted-foreground">Eraser Size</label>
+                      <span className="text-xs text-muted-foreground font-mono">{drawing.eraserSize}px</span>
+                    </div>
+                    <Slider
+                      value={[drawing.eraserSize]}
+                      onValueChange={([value]) => drawing.setEraserSize(value)}
+                      min={5}
+                      max={50}
+                      step={5}
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => drawing.clearSlice(currentSlice)}
+                    className="w-full"
+                  >
+                    Clear Current Slice
+                  </Button>
+                </div>
+              </div>
+
+              {/* Structures List */}
+              <StructureList
                 structures={drawing.structures}
-                elasticRadius={drawing.elasticRadius}
-                onElasticRadiusChange={drawing.setElasticRadius}
-                onDeleteContour={handleDeleteContour}
-                onCopyContour={handleCopyContour}
-                onPasteContour={handlePasteContour}
-                onSmooth2D={handleSmooth2D}
-                onSmooth3D={handleSmooth3D}
-                onApplyMargin={handleApplyMargin}
-                onBooleanOp={handleBooleanOp}
-                onCropWithMargin={handleCropWithMargin}
-                onThreshold={handleThreshold}
-                onRegionGrow={handleRegionGrow}
-                onMagicWand={handleMagicWand}
-                pixelSpacing={ctImages[currentSlice]?.pixelSpacing?.[0]}
+                activeStructureId={drawing.activeStructureId}
+                currentSlice={currentSlice}
+                onToggleVisibility={toggleRTStructureVisibility}
+                onStartEditing={startEditingRTStructure}
+                onAddStructure={addNewStructure}
+                onInterpolate={interpolateSlices}
+                getContoursForSlice={drawing.getContoursForSlice}
               />
+
+              {/* Advanced Editing Panel */}
+              {drawing.selectedContour && (
+                <div className="border-t border-border overflow-y-auto">
+                  <EditingPanel
+                    selectedContour={drawing.selectedContour}
+                    structures={drawing.structures}
+                    elasticRadius={drawing.elasticRadius}
+                    onElasticRadiusChange={drawing.setElasticRadius}
+                    onDeleteContour={handleDeleteContour}
+                    onCopyContour={handleCopyContour}
+                    onPasteContour={handlePasteContour}
+                    onSmooth2D={handleSmooth2D}
+                    onSmooth3D={handleSmooth3D}
+                    onApplyMargin={handleApplyMargin}
+                    onBooleanOp={handleBooleanOp}
+                    onCropWithMargin={handleCropWithMargin}
+                    onThreshold={handleThreshold}
+                    onRegionGrow={handleRegionGrow}
+                    onMagicWand={handleMagicWand}
+                    pixelSpacing={ctImages[currentSlice]?.pixelSpacing?.[0]}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Collapsed Right Sidebar - Show Button */}
+          {rightSidebarCollapsed && (
+            <div className="relative">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setRightSidebarCollapsed(false)}
+                className="absolute right-0 top-2 h-8 w-6 p-0 rounded-l-md bg-card border border-border border-r-0 z-10"
+                title="Expand panel"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
             </div>
           )}
         </div>
-        )}
-
-        {/* Collapsed Right Sidebar - Show Button */}
-        {rightSidebarCollapsed && (
-          <div className="relative">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setRightSidebarCollapsed(false)}
-              className="absolute right-0 top-2 h-8 w-6 p-0 rounded-l-md bg-card border border-border border-r-0 z-10"
-              title="Expand panel"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-          </div>
-        )}
-      </div>
       )}
-
-      {/* Keyboard Shortcuts Help Modal */}
       <KeyboardShortcutsHelp
         open={showShortcutsHelp}
         onOpenChange={setShowShortcutsHelp}

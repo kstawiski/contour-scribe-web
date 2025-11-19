@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
-import { DicomImage, DicomRTStruct } from "@/lib/dicom-utils";
+import { DicomImage, DicomRTStruct, Point2D, Contour, Structure3D } from "@/types";
 import {
   buildMPRVolume,
   getAxialSlice,
@@ -18,7 +18,7 @@ import {
 } from "@/lib/mpr-utils";
 import { RotateCcw, Maximize2, Eye, EyeOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { Structure3D } from "@/lib/contour-utils";
+
 
 interface MPRViewerProps {
   ctImages: DicomImage[];
@@ -95,8 +95,8 @@ export const MPRViewer = ({
       // Get current slice index for this plane
       const currentSliceIndex =
         plane === 'axial' ? crosshair.axialIndex :
-        plane === 'sagittal' ? crosshair.sagittalIndex :
-        crosshair.coronalIndex;
+          plane === 'sagittal' ? crosshair.sagittalIndex :
+            crosshair.coronalIndex;
 
       // Get the current slice to know dimensions
       let slice;
@@ -108,43 +108,33 @@ export const MPRViewer = ({
         slice = getCoronalSlice(volume, currentSliceIndex);
       }
 
-      // Render RT structures from DICOM (axial plane only)
-      if (rtStruct?.structures) {
-        rtStruct.structures.forEach((rtStructure, structIndex) => {
-          // Find corresponding structure in structures array for visibility
-          const structure = structures.find(s => s.id === `rt_${structIndex}`);
-          if (structure && !structure.visible) return;
+      // Render ALL structures from the unified state (both loaded RT and new drawings)
+      // Currently only supports axial plane rendering
+      if (plane === 'axial') {
+        structures.forEach((structure) => {
+          if (!structure.visible) return;
 
-          const color = structure?.color || `rgb(${Math.round(rtStructure.color[0])}, ${Math.round(rtStructure.color[1])}, ${Math.round(rtStructure.color[2])})`;
-
-          ctx.strokeStyle = color;
+          ctx.strokeStyle = structure.color;
           ctx.lineWidth = 2;
           ctx.setLineDash([]);
 
-          rtStructure.contours.forEach((contour) => {
+          structure.contours.forEach((contour) => {
             if (contour.points.length === 0) return;
 
-            // For axial plane: match by Z coordinate (slice location)
-            if (plane === 'axial') {
-              const contourZ = contour.points[0][2];
-              const currentImage = volume.axialSlices[currentSliceIndex];
-              if (!currentImage || currentImage.sliceLocation === undefined) return;
-
-              const tolerance = (currentImage.sliceThickness || 1.0) / 2;
-              if (Math.abs(contourZ - currentImage.sliceLocation) > tolerance) return;
-
-              // Draw contour
+            // For axial plane: match by slice index
+            // Note: We use sliceIndex for efficiency, but could also check Z coordinate
+            if (contour.sliceIndex === currentSliceIndex) {
               ctx.beginPath();
               let started = false;
-              contour.points.forEach((point) => {
-                const worldX = point[0];
-                const worldY = point[1];
+              contour.points.forEach((worldPoint) => {
+                const currentImage = volume.axialSlices[currentSliceIndex];
+                if (!currentImage) return;
 
                 // Convert world coordinates to pixel coordinates
                 const imagePosition = currentImage.imagePosition || [0, 0, 0];
                 const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-                const pixelX = (worldX - imagePosition[0]) / pixelSpacing[0];
-                const pixelY = (worldY - imagePosition[1]) / pixelSpacing[1];
+                const pixelX = (worldPoint.x - imagePosition[0]) / pixelSpacing[0];
+                const pixelY = (worldPoint.y - imagePosition[1]) / pixelSpacing[1];
 
                 // Convert pixel coordinates to canvas coordinates
                 const canvasX = (pixelX / slice.width) * canvas.width;
@@ -157,54 +147,14 @@ export const MPRViewer = ({
                   ctx.lineTo(canvasX, canvasY);
                 }
               });
-              ctx.closePath();
+              if (contour.isClosed) {
+                ctx.closePath();
+              }
               ctx.stroke();
             }
           });
         });
       }
-
-      // Render drawing structures (axial plane only)
-      structures.filter(s => s.id.startsWith('edit_') && s.visible).forEach((structure) => {
-        ctx.strokeStyle = structure.color;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([]);
-
-        structure.contours.forEach((contour) => {
-          if (contour.points.length === 0) return;
-
-          // For axial plane: match by slice index
-          if (plane === 'axial' && contour.sliceIndex === currentSliceIndex) {
-            ctx.beginPath();
-            let started = false;
-            contour.points.forEach((worldPoint) => {
-              const currentImage = volume.axialSlices[currentSliceIndex];
-              if (!currentImage) return;
-
-              // Convert world coordinates to pixel coordinates
-              const imagePosition = currentImage.imagePosition || [0, 0, 0];
-              const pixelSpacing = currentImage.pixelSpacing || [1, 1];
-              const pixelX = (worldPoint.x - imagePosition[0]) / pixelSpacing[0];
-              const pixelY = (worldPoint.y - imagePosition[1]) / pixelSpacing[1];
-
-              // Convert pixel coordinates to canvas coordinates
-              const canvasX = (pixelX / slice.width) * canvas.width;
-              const canvasY = (pixelY / slice.height) * canvas.height;
-
-              if (!started) {
-                ctx.moveTo(canvasX, canvasY);
-                started = true;
-              } else {
-                ctx.lineTo(canvasX, canvasY);
-              }
-            });
-            if (contour.isClosed) {
-              ctx.closePath();
-            }
-            ctx.stroke();
-          }
-        });
-      });
     },
     [volume, showStructures, crosshair, rtStruct, structures]
   );
@@ -391,8 +341,8 @@ export const MPRViewer = ({
         plane === 'axial'
           ? crosshair.axialIndex + delta
           : plane === 'sagittal'
-          ? crosshair.sagittalIndex + delta
-          : crosshair.coronalIndex + delta,
+            ? crosshair.sagittalIndex + delta
+            : crosshair.coronalIndex + delta,
         crosshair
       );
       setCrosshair(newCrosshair);

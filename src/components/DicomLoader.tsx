@@ -5,7 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import JSZip from "jszip";
-import { DicomProcessor, DicomImage, DicomRTStruct } from "@/lib/dicom-utils";
+import { DicomProcessor } from "@/lib/dicom-utils";
+import { NiftiProcessor } from "@/lib/nifti-utils";
+import { DicomImage, DicomRTStruct } from "@/types";
 
 interface DicomLoaderProps {
   onDataLoaded: (data: { ctImages: DicomImage[], rtStruct?: DicomRTStruct }) => void;
@@ -21,19 +23,19 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
     try {
       setIsLoading(true);
       const zip = new JSZip();
-      
+
       const zipData = file instanceof File ? await file.arrayBuffer() : file;
       const zipContent = await zip.loadAsync(zipData);
-      
+
       const ctImages: DicomImage[] = [];
       let rtStruct: DicomRTStruct | undefined;
-      
+
       // Process files in the ZIP
       for (const [filename, fileObj] of Object.entries(zipContent.files)) {
         if (fileObj.dir) continue;
-        
+
         const content = await fileObj.async("arraybuffer");
-        
+
         // Try to parse as DICOM
         try {
           // Check if it's a DICOM file by looking for DICOM prefix
@@ -44,7 +46,7 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
             uint8Array[130] === 0x43 && // 'C'
             uint8Array[131] === 0x4D    // 'M'
           );
-          
+
           if (hasDicomPrefix || filename.toLowerCase().endsWith('.dcm')) {
             // Try to parse as CT image first
             const dicomImage = DicomProcessor.parseDicomFile(content);
@@ -52,44 +54,40 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
               ctImages.push(dicomImage);
               continue;
             }
-            
+
             // If not a CT image, try parsing as RT Structure
             const rtStructData = DicomProcessor.parseRTStruct(content);
             if (rtStructData && !rtStruct) {
               rtStruct = rtStructData;
             }
+          } else if (filename.toLowerCase().endsWith('.nii') || filename.toLowerCase().endsWith('.nii.gz')) {
+            // Handle NIfTI files inside ZIP
+            try {
+              const volume = NiftiProcessor.parseVolume(content);
+              if (volume) {
+                const niftiImages = NiftiProcessor.volumeToDicomImages(volume);
+                ctImages.push(...niftiImages);
+              }
+            } catch (error) {
+              console.warn(`Failed to parse NIfTI file ${filename}:`, error);
+            }
           }
         } catch (error) {
           console.warn(`Could not parse file ${filename} as DICOM:`, error);
-          
+
           // Fallback: try simple filename detection for non-DICOM files
-          if (filename.toLowerCase().includes("ct") || 
-              filename.toLowerCase().includes("image") ||
-              filename.toLowerCase().includes("slice")) {
-            // Create a mock DICOM image for testing
-            const mockImage: DicomImage = {
-              arrayBuffer: content,
-              dataSet: null,
-              pixelData: new Uint8Array(512 * 512).map(() => Math.random() * 255),
-              width: 512,
-              height: 512,
-              windowCenter: 40,
-              windowWidth: 400,
-              rescaleIntercept: 0,
-              rescaleSlope: 1,
-              seriesInstanceUID: `mock.${Date.now()}.${ctImages.length}`,
-              sopInstanceUID: `mock.${Date.now()}.${ctImages.length}`,
-              sliceLocation: ctImages.length * 5
-            };
-            ctImages.push(mockImage);
+          if (filename.toLowerCase().includes("ct") ||
+            filename.toLowerCase().includes("image") ||
+            filename.toLowerCase().includes("slice")) {
+            console.warn(`File ${filename} looks like an image but lacks DICOM headers.`);
           }
         }
       }
-      
+
       if (ctImages.length === 0) {
         throw new Error("No valid DICOM CT images found in the ZIP file. Please ensure the ZIP contains DICOM files (.dcm) or files with DICOM headers.");
       }
-      
+
       // Sort CT images by slice location if available
       ctImages.sort((a, b) => {
         if (a.sliceLocation !== undefined && b.sliceLocation !== undefined) {
@@ -112,7 +110,7 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
         title: "DICOM data loaded successfully",
         description: `Found ${ctImages.length} CT images${matchedRTStruct ? " and RT structure" : ""}`,
       });
-      
+
     } catch (error) {
       console.error("Error processing ZIP file:", error);
       toast({
@@ -125,21 +123,58 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
     }
   }, [onDataLoaded, toast]);
 
-  const handleFileUpload = useCallback((files: FileList | null) => {
+  const handleFileUpload = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    
+
     const file = files[0];
-    if (!file.name.toLowerCase().endsWith(".zip")) {
+    const fileName = file.name.toLowerCase();
+
+    if (fileName.endsWith(".zip")) {
+      processZipFile(file);
+    } else if (fileName.endsWith(".nii") || fileName.endsWith(".nii.gz")) {
+      try {
+        setIsLoading(true);
+        const arrayBuffer = await file.arrayBuffer();
+        const volume = NiftiProcessor.parseVolume(arrayBuffer);
+
+        if (volume) {
+          const ctImages = NiftiProcessor.volumeToDicomImages(volume);
+
+          // Sort images by slice location (z-index)
+          ctImages.sort((a, b) => {
+            if (a.imagePosition && b.imagePosition) {
+              return a.imagePosition[2] - b.imagePosition[2];
+            }
+            return (a.sliceLocation || 0) - (b.sliceLocation || 0);
+          });
+
+          onDataLoaded({ ctImages });
+
+          toast({
+            title: "NIfTI data loaded successfully",
+            description: `Converted volume to ${ctImages.length} slices`,
+          });
+        } else {
+          throw new Error("Failed to parse NIfTI volume");
+        }
+      } catch (error) {
+        console.error("Error processing NIfTI file:", error);
+        toast({
+          title: "Error loading NIfTI data",
+          description: "Failed to process NIfTI file",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
       toast({
         title: "Invalid file type",
-        description: "Please upload a ZIP file containing DICOM data",
+        description: "Please upload a ZIP file containing DICOM data, or a .nii/.nii.gz file",
         variant: "destructive",
       });
-      return;
     }
-    
-    processZipFile(file);
-  }, [processZipFile, toast]);
+  }, [processZipFile, toast, onDataLoaded]);
 
   const handleUrlLoad = useCallback(async () => {
     if (!urlInput.trim()) {
@@ -150,18 +185,18 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
       });
       return;
     }
-    
+
     try {
       setIsLoading(true);
       const response = await fetch(urlInput);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      
+
       const arrayBuffer = await response.arrayBuffer();
       await processZipFile(arrayBuffer);
-      
+
     } catch (error) {
       console.error("Error fetching from URL:", error);
       toast({
@@ -217,8 +252,8 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
             <div
               className={`
                 relative border-2 border-dashed rounded-lg p-8 text-center transition-all duration-200
-                ${isDragOver 
-                  ? "border-primary bg-primary/10 shadow-glow" 
+                ${isDragOver
+                  ? "border-primary bg-primary/10 shadow-glow"
                   : "border-border bg-muted/50"
                 }
                 ${isLoading ? "pointer-events-none opacity-50" : "cursor-pointer hover:border-primary/50"}
@@ -231,12 +266,12 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
               <input
                 id="file-upload"
                 type="file"
-                accept=".zip"
+                accept=".zip,.nii,.nii.gz"
                 onChange={(e) => handleFileUpload(e.target.files)}
                 className="hidden"
                 disabled={isLoading}
               />
-              
+
               {isLoading ? (
                 <div className="flex flex-col items-center gap-4">
                   <Loader2 className="w-12 h-12 text-primary animate-spin" />
@@ -252,7 +287,7 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
                       Drop your ZIP file here or click to browse
                     </p>
                     <p className="text-muted-foreground text-sm">
-                      ZIP must contain CT images and optional RT structure
+                      Supports ZIP (DICOM) or .nii/.nii.gz (NIfTI)
                     </p>
                   </div>
                 </div>
@@ -309,6 +344,7 @@ export const DicomLoader = ({ onDataLoaded }: DicomLoaderProps) => {
                 <ul className="text-muted-foreground space-y-1">
                   <li>• DICOM CT Image Series</li>
                   <li>• DICOM RT Structure Sets</li>
+                  <li>• NIfTI Volumes (.nii, .nii.gz)</li>
                   <li>• ZIP Archives (.zip)</li>
                 </ul>
               </div>

@@ -1,41 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as dicomParser from 'dicom-parser';
-
-export interface DicomImage {
-  arrayBuffer: ArrayBuffer;
-  dataSet: any;
-  pixelData: Uint16Array | Uint8Array;
-  width: number;
-  height: number;
-  windowCenter: number;
-  windowWidth: number;
-  rescaleIntercept: number;
-  rescaleSlope: number;
-  seriesInstanceUID: string;
-  sopInstanceUID: string;
-  sopClassUID?: string;
-  imagePosition?: number[];
-  imageOrientation?: number[];
-  sliceLocation?: number;
-  sliceThickness?: number;
-  pixelSpacing?: number[];
-  frameOfReferenceUID?: string;
-  studyInstanceUID?: string;
-}
-
-export interface DicomStructure {
-  name: string;
-  color: [number, number, number];
-  contours: Array<{
-    points: number[][];
-    sliceIndex: number;
-  }>;
-}
-
-export interface DicomRTStruct {
-  structures: DicomStructure[];
-  frameOfReference: string;
-}
+import { DicomImage, DicomStructure, DicomRTStruct } from '@/types';
 
 export class DicomProcessor {
   static parseDicomFile(arrayBuffer: ArrayBuffer): DicomImage | null {
@@ -151,7 +116,7 @@ export class DicomProcessor {
           const roiName = roiItem.string('x30060026') || `Structure_${index + 1}`;
 
           // Find corresponding contour
-          const contourItem = contourItems.find((item: any) => 
+          const contourItem = contourItems.find((item: any) =>
             item.uint16('x30060084') === roiNumber
           );
 
@@ -174,10 +139,10 @@ export class DicomProcessor {
                   for (let i = 0; i < points.length; i += 3) {
                     pointPairs.push([points[i], points[i + 1], points[i + 2]]);
                   }
-                  
+
                   // Don't try to calculate slice index here - use actual Z coordinate
                   // The viewer will match contours to slices based on Z position
-                  
+
                   structure.contours.push({
                     points: pointPairs,
                     sliceIndex: 0 // Will be matched by Z coordinate in viewer

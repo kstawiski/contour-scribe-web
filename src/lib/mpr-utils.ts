@@ -1,4 +1,4 @@
-import { DicomImage } from './dicom-utils';
+import { DicomImage } from '@/types';
 
 export type ViewPlane = 'axial' | 'sagittal' | 'coronal';
 

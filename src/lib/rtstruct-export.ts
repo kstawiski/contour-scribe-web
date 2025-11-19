@@ -1,6 +1,5 @@
 import { saveAs } from 'file-saver';
-import { DicomImage, DicomRTStruct } from './dicom-utils';
-import { Point2D } from './contour-utils';
+import { DicomImage, DicomRTStruct, Point2D } from '@/types';
 
 interface ExportStructure {
   id: string;

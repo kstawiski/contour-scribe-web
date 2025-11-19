@@ -1,15 +1,11 @@
 import polygonClipping from 'polygon-clipping';
-import { Point2D, Contour, Structure3D } from './contour-utils';
+import { Point2D, Contour, Structure3D, SelectionInfo, ImageData2D, BooleanOp } from '@/types';
 
 /**
  * Selection and Hit Testing
  */
 
-export interface SelectionInfo {
-  contour: Contour;
-  pointIndex?: number;
-  distance: number;
-}
+// SelectionInfo is now imported from @/types
 
 /**
  * Find the closest point on any contour to the given position
@@ -99,6 +95,20 @@ function distanceToSegment(p: Point2D, a: Point2D, b: Point2D): number {
   };
 
   return distance(p, projection);
+}
+
+/**
+ * Calculate distance between two points
+ */
+function distance(p1: Point2D, p2: Point2D): number {
+  return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+}
+
+/**
+ * Calculate squared distance between two points
+ */
+function distance2(p1: Point2D, p2: Point2D): number {
+  return Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2);
 }
 
 /**
@@ -326,7 +336,7 @@ export function smooth3D(
   // Apply smoothing iteratively, using results from previous iteration
   for (let iter = 0; iter < iterations; iter++) {
     const smoothedContours: Contour[] = [];
-    
+
     for (let i = 0; i < sortedSlices.length; i++) {
       const sliceIndex = sortedSlices[i];
       const contours = sliceMap.get(sliceIndex)!;
@@ -363,7 +373,7 @@ export function smooth3D(
         }
       }
     }
-    
+
     // Update sliceMap with smoothed results for next iteration
     sliceMap = new Map<number, Contour[]>();
     for (const contour of smoothedContours) {
@@ -386,6 +396,54 @@ export function smooth3D(
 }
 
 /**
+ * Helper: Resample contour points to a specific count
+ */
+function resampleContourPoints(points: Point2D[], targetCount: number): Point2D[] {
+  if (points.length <= 1) return points;
+
+  const totalLength = calculateContourLength(points);
+  const segmentLength = totalLength / (targetCount - 1);
+
+  const resampled: Point2D[] = [points[0]];
+  let currentLength = 0;
+  let targetLength = segmentLength;
+
+  for (let i = 1; i < points.length; i++) {
+    const segLen = distance(points[i - 1], points[i]);
+    currentLength += segLen;
+
+    while (currentLength >= targetLength && resampled.length < targetCount) {
+      const t = (targetLength - (currentLength - segLen)) / segLen;
+      const interpolatedPoint = {
+        x: points[i - 1].x + (points[i].x - points[i - 1].x) * t,
+        y: points[i - 1].y + (points[i].y - points[i - 1].y) * t
+      };
+
+      resampled.push(interpolatedPoint);
+      targetLength += segmentLength;
+    }
+  }
+
+  // Ensure we have exactly the target count
+  if (resampled.length < targetCount) {
+    resampled.push(points[points.length - 1]);
+  }
+
+  return resampled.slice(0, targetCount);
+}
+
+/**
+ * Helper: Calculate contour length
+ */
+function calculateContourLength(points: Point2D[]): number {
+  let length = 0;
+  for (let i = 1; i < points.length; i++) {
+    length += distance(points[i - 1], points[i]);
+  }
+  return length;
+}
+
+/**
  * Margin Operations (Polygon Offsetting)
  */
 
@@ -402,9 +460,9 @@ export function applyMargin(
 
   try {
     // Convert contour to polygon-clipping format
-    const polygon: polygonClipping.Polygon = [[
+    const polygon: polygonClipping.Polygon = [
       contour.points.map(p => [p.x, p.y] as polygonClipping.Pair)
-    ]];
+    ];
 
     // Use buffer operation to expand/contract
     // For expansion, we offset outward; for contraction, inward
@@ -435,7 +493,7 @@ function offsetPolygon2D(
   polygon: polygonClipping.Polygon,
   distance: number
 ): polygonClipping.Polygon | null {
-  const points = polygon[0][0];
+  const points = polygon[0];
   const n = points.length;
   const offsetPoints: polygonClipping.Pair[] = [];
 
@@ -485,12 +543,7 @@ function offsetPolygon2D(
  * Boolean Operations
  */
 
-export enum BooleanOp {
-  UNION = 'union',
-  INTERSECTION = 'intersection',
-  DIFFERENCE = 'difference',
-  XOR = 'xor'
-}
+// BooleanOp is now imported from @/types
 
 /**
  * Perform boolean operation on two contours
@@ -502,12 +555,12 @@ export function booleanOperation(
 ): Contour[] {
   try {
     // Convert to polygon-clipping format
-    const poly1: polygonClipping.Polygon = [[
+    const poly1: polygonClipping.Polygon = [
       contour1.points.map(p => [p.x, p.y] as polygonClipping.Pair)
-    ]];
-    const poly2: polygonClipping.Polygon = [[
+    ];
+    const poly2: polygonClipping.Polygon = [
       contour2.points.map(p => [p.x, p.y] as polygonClipping.Pair)
-    ]];
+    ];
 
     let result: polygonClipping.MultiPolygon;
 
@@ -582,13 +635,7 @@ export function cropWithMargin(
  * Semi-Automatic Segmentation
  */
 
-export interface ImageData2D {
-  width: number;
-  height: number;
-  data: Uint8Array | Uint16Array;
-  windowWidth: number;
-  windowCenter: number;
-}
+// ImageData2D is now imported from @/types
 
 /**
  * Threshold-based segmentation
@@ -821,66 +868,7 @@ function orderBoundaryPoints(points: Point2D[]): Point2D[] {
   return ordered;
 }
 
-/**
- * Helper: Resample contour to target number of points
- */
-function resampleContourPoints(points: Point2D[], targetCount: number): Point2D[] {
-  if (points.length <= 1) return points;
 
-  const totalLength = calculatePathLength(points);
-  const segmentLength = totalLength / (targetCount - 1);
-
-  const resampled: Point2D[] = [points[0]];
-  let currentLength = 0;
-  let targetLength = segmentLength;
-
-  for (let i = 1; i < points.length; i++) {
-    const segLen = distance(points[i - 1], points[i]);
-    currentLength += segLen;
-
-    while (currentLength >= targetLength && resampled.length < targetCount) {
-      const t = (targetLength - (currentLength - segLen)) / segLen;
-      const interpolated = {
-        x: points[i - 1].x + (points[i].x - points[i - 1].x) * t,
-        y: points[i - 1].y + (points[i].y - points[i - 1].y) * t
-      };
-
-      resampled.push(interpolated);
-      targetLength += segmentLength;
-    }
-  }
-
-  if (resampled.length < targetCount) {
-    resampled.push(points[points.length - 1]);
-  }
-
-  return resampled.slice(0, targetCount);
-}
-
-/**
- * Helper: Calculate total path length
- */
-function calculatePathLength(points: Point2D[]): number {
-  let length = 0;
-  for (let i = 1; i < points.length; i++) {
-    length += distance(points[i - 1], points[i]);
-  }
-  return length;
-}
-
-/**
- * Helper: Calculate distance between two points
- */
-function distance(p1: Point2D, p2: Point2D): number {
-  return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
-}
-
-/**
- * Helper: Calculate squared distance
- */
-function distance2(p1: Point2D, p2: Point2D): number {
-  return Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2);
-}
 
 /**
  * Copy/Paste Operations
